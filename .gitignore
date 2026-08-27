@@ -1,0 +1,11 @@
+node_modules/
+.pnpm-store/
+.next/
+*.tsbuildinfo
+out/
+.env*
+!.env.example
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
