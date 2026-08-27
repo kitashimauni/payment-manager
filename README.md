@@ -4,11 +4,12 @@
 
 ## 開発
 
-Node.jsはプロジェクトの `mise` 設定または環境で用意したものを使います。
+Node.js 26.8.1とpnpm 11.21.0はプロジェクトの `mise.toml` で固定しています。
 
 ```bash
-pnpm install
-pnpm dev
+mise install
+mise exec -- pnpm install
+mise exec -- pnpm dev
 ```
 
 ブラウザで `http://localhost:3000` を開いてください。初回起動時に支払い方法の初期値（現金、Suica、PayPay、Visa、Mastercard、QUICPay）がIndexedDBへ作成されます。
