@@ -1,5 +1,5 @@
 {
-  "id": "bb853b1d-5811-4392-b770-a1833af06b6c",
+  "id": "8183781c-e97e-4c7a-90a0-cd4a6ab29059",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -423,7 +423,7 @@
             "user_id",
             "id"
           ],
-          "onDelete": "set null",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },
@@ -532,7 +532,7 @@
             "user_id",
             "id"
           ],
-          "onDelete": "set null",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },

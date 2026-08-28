@@ -104,7 +104,7 @@ export const payments = pgTable(
       columns: [table.userId, table.groupId],
       foreignColumns: [groups.userId, groups.id],
       name: "payments_user_group_fk",
-    }).onDelete("set null"),
+    }).onDelete("restrict"),
     index("payments_user_paid_at_idx").on(table.userId, table.paidAt, table.id),
     index("payments_user_updated_at_idx").on(table.userId, table.updatedAt, table.id),
     index("payments_group_paid_at_idx").on(table.groupId, table.paidAt),
@@ -130,7 +130,7 @@ export const userSettings = pgTable(
       columns: [table.userId, table.currentGroupId],
       foreignColumns: [groups.userId, groups.id],
       name: "user_settings_user_group_fk",
-    }).onDelete("set null"),
+    }).onDelete("restrict"),
     index("user_settings_user_updated_at_idx").on(table.userId, table.updatedAt),
   ],
 );

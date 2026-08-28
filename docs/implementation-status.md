@@ -30,6 +30,6 @@
 ## 残りの実装単位
 
 1. OAuth方式とユーザー識別子を決定する。
-3. Push/Pullの認証、所有権チェック、cursor、Last Write Winsを実装する。
-4. サーバー変更をIndexedDBへ適用するPull処理と競合検知を追加する。
-5. CSV/JSON Export、集計、検索をPhase 2として追加する。
+2. Push/Pullの認証、所有権チェック、cursor、Last Write Winsを実装する。
+3. サーバー変更をIndexedDBへ適用するPull処理と競合検知を追加する。
+4. CSV/JSON Export、集計、検索をPhase 2として追加する。

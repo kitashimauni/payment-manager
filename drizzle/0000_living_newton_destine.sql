@@ -80,7 +80,7 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "payments" ADD CONSTRAINT "payments_user_group_fk" FOREIGN KEY ("user_id","group_id") REFERENCES "public"."groups"("user_id","id") ON DELETE set null ON UPDATE no action;
+ ALTER TABLE "payments" ADD CONSTRAINT "payments_user_group_fk" FOREIGN KEY ("user_id","group_id") REFERENCES "public"."groups"("user_id","id") ON DELETE restrict ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
@@ -92,7 +92,7 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "user_settings" ADD CONSTRAINT "user_settings_user_group_fk" FOREIGN KEY ("user_id","current_group_id") REFERENCES "public"."groups"("user_id","id") ON DELETE set null ON UPDATE no action;
+ ALTER TABLE "user_settings" ADD CONSTRAINT "user_settings_user_group_fk" FOREIGN KEY ("user_id","current_group_id") REFERENCES "public"."groups"("user_id","id") ON DELETE restrict ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
