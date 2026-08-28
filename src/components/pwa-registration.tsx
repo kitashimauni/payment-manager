@@ -5,7 +5,7 @@ import { useEffect } from "react";
 export function PwaRegistration() {
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => undefined);
     }
   }, []);
 
