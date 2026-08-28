@@ -8,6 +8,7 @@ import {
   listPaymentMethods,
   listPayments,
   now,
+  removePayment,
   savePayment,
   saveSettings,
   seedDefaultData,
@@ -110,9 +111,7 @@ export default function HomePage() {
 
   async function undo() {
     if (!toast?.payment) return;
-    const restored = { ...toast.payment, deletedAt: now(), updatedAt: now() };
-    // Keep the operation local and create a compensating update in the outbox.
-    await savePayment({ ...restored, deletedAt: null, updatedAt: now() });
+    await removePayment(toast.payment.id);
     setRecent((items) => items.filter((item) => item.id !== toast.payment?.id));
     setToast({ message: "登録を取り消しました" });
   }
