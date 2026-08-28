@@ -49,69 +49,6 @@ function transactionDone(transaction: IDBTransaction) {
   });
 }
 
-type TransactionCallback<T> = (
-  transaction: IDBTransaction,
-  complete: (result: T) => void,
-  fail: (cause: unknown) => void,
-) => void;
-
-/**
- * Keep all requests for a write operation in one IndexedDB transaction.
- * `complete` only resolves after the transaction itself commits, so a failed
- * outbox request also rolls back the entity write.
- */
-function runWriteTransaction<T>(storeNames: StoreName[], callback: TransactionCallback<T>) {
-  return database().then(
-    (db) =>
-      new Promise<T>((resolve, reject) => {
-        const transaction = db.transaction(storeNames, "readwrite");
-        let result: T;
-        let callbackCompleted = false;
-        let settled = false;
-
-        const rejectOnce = (cause: unknown) => {
-          if (settled) return;
-          settled = true;
-          reject(cause instanceof Error ? cause : new Error("IndexedDB transaction failed"));
-        };
-
-        const fail = (cause: unknown) => {
-          rejectOnce(cause);
-          try {
-            transaction.abort();
-          } catch {
-            // The transaction may already have aborted itself.
-          }
-        };
-
-        transaction.oncomplete = () => {
-          if (settled) return;
-          settled = true;
-          if (!callbackCompleted) {
-            reject(new Error("IndexedDB transaction completed without a result"));
-            return;
-          }
-          resolve(result);
-        };
-        transaction.onerror = () => rejectOnce(transaction.error ?? new Error("IndexedDB transaction error"));
-        transaction.onabort = () => rejectOnce(transaction.error ?? new Error("IndexedDB transaction aborted"));
-
-        try {
-          callback(
-            transaction,
-            (nextResult) => {
-              result = nextResult;
-              callbackCompleted = true;
-            },
-            fail,
-          );
-        } catch (cause) {
-          fail(cause);
-        }
-      }),
-  );
-}
-
 let databasePromise: Promise<IDBDatabase> | undefined;
 
 function database() {
@@ -154,24 +91,6 @@ async function getAll<T>(storeName: StoreName) {
   return requestResult(transaction.objectStore(storeName).getAll()) as Promise<T[]>;
 }
 
-function addOutboxOperation(transaction: IDBTransaction, type: OutboxOperationType, entityId: string, payload: unknown) {
-  transaction.objectStore("outbox").add({
-    id: uuid(),
-    type,
-    entityId,
-    payload,
-    createdAt: now(),
-  });
-}
-
-function saveWithOutbox<T extends { id: string }>(storeName: StoreName, type: OutboxOperationType, value: T) {
-  return runWriteTransaction([storeName, "outbox"], (transaction, complete) => {
-    transaction.objectStore(storeName).put(value);
-    addOutboxOperation(transaction, type, value.id, value);
-    complete(value);
-  });
-}
-
 export async function seedDefaultData() {
   const existing = await getAll<PaymentMethod>("paymentMethods");
   const timestamp = now();
@@ -204,30 +123,18 @@ export function getPayment(id: string) {
   return get<Payment>("payments", id);
 }
 
-export function savePayment(payment: Payment) {
-  return saveWithOutbox("payments", "PAYMENT_UPSERT", payment);
+export async function savePayment(payment: Payment) {
+  await put("payments", payment);
+  await enqueue("PAYMENT_UPSERT", payment.id, payment);
+  return payment;
 }
 
-export function removePayment(id: string) {
-  return runWriteTransaction(["payments", "outbox"], (transaction, complete, fail) => {
-    const request = transaction.objectStore("payments").get(id);
-    request.onsuccess = () => {
-      try {
-        const payment = request.result as Payment | undefined;
-        if (!payment) {
-          complete(undefined);
-          return;
-        }
-        const deleted = { ...payment, deletedAt: now(), updatedAt: now() };
-        transaction.objectStore("payments").put(deleted);
-        addOutboxOperation(transaction, "PAYMENT_DELETE", id, deleted);
-        complete(undefined);
-      } catch (cause) {
-        fail(cause);
-      }
-    };
-    request.onerror = () => fail(request.error ?? new Error("Payment lookup failed"));
-  });
+export async function removePayment(id: string) {
+  const payment = await getPayment(id);
+  if (!payment) return;
+  const deleted = { ...payment, deletedAt: now(), updatedAt: now() };
+  await put("payments", deleted);
+  await enqueue("PAYMENT_DELETE", id, deleted);
 }
 
 export async function listGroups() {
@@ -239,70 +146,30 @@ export function getGroup(id: string) {
   return get<Group>("groups", id);
 }
 
-export function saveGroup(group: Group) {
-  return saveWithOutbox("groups", "GROUP_UPSERT", group);
+export async function saveGroup(group: Group) {
+  await put("groups", group);
+  await enqueue("GROUP_UPSERT", group.id, group);
+  return group;
 }
 
-export function removeGroup(id: string) {
-  return runWriteTransaction(["groups", "payments", "settings", "outbox"], (transaction, complete, fail) => {
-    const groupRequest = transaction.objectStore("groups").get(id);
-    const paymentsRequest = transaction.objectStore("payments").getAll();
-    const settingsRequest = transaction.objectStore("settings").get("local");
-    let group: Group | undefined;
-    let payments: Payment[] = [];
-    let settings: UserSettings | undefined;
-    let pendingRequests = 3;
-
-    const finishRead = () => {
-      pendingRequests -= 1;
-      if (pendingRequests > 0) return;
-
-      try {
-        if (!group) {
-          complete(undefined);
-          return;
-        }
-
-        const timestamp = now();
-        payments
-          .filter((payment) => payment.groupId === id && !payment.deletedAt)
-          .forEach((payment) => {
-            const ungrouped = { ...payment, groupId: null, updatedAt: timestamp };
-            transaction.objectStore("payments").put(ungrouped);
-            addOutboxOperation(transaction, "PAYMENT_UPSERT", payment.id, ungrouped);
-          });
-
-        const deleted = { ...group, status: "archived" as const, deletedAt: timestamp, updatedAt: timestamp };
-        transaction.objectStore("groups").put(deleted);
-        addOutboxOperation(transaction, "GROUP_DELETE", id, deleted);
-
-        if (settings?.currentGroupId === id) {
-          const updatedSettings = { ...settings, currentGroupId: null, updatedAt: timestamp };
-          transaction.objectStore("settings").put(updatedSettings);
-          addOutboxOperation(transaction, "SETTINGS_UPSERT", updatedSettings.id, updatedSettings);
-        }
-        complete(undefined);
-      } catch (cause) {
-        fail(cause);
-      }
-    };
-
-    groupRequest.onsuccess = () => {
-      group = groupRequest.result as Group | undefined;
-      finishRead();
-    };
-    groupRequest.onerror = () => fail(groupRequest.error ?? new Error("Group lookup failed"));
-    paymentsRequest.onsuccess = () => {
-      payments = paymentsRequest.result as Payment[];
-      finishRead();
-    };
-    paymentsRequest.onerror = () => fail(paymentsRequest.error ?? new Error("Payment lookup failed"));
-    settingsRequest.onsuccess = () => {
-      settings = settingsRequest.result as UserSettings | undefined;
-      finishRead();
-    };
-    settingsRequest.onerror = () => fail(settingsRequest.error ?? new Error("Settings lookup failed"));
-  });
+export async function removeGroup(id: string) {
+  const group = await getGroup(id);
+  if (!group) return;
+  const timestamp = now();
+  const [payments, settings] = await Promise.all([getAll<Payment>("payments"), getSettings()]);
+  await Promise.all(
+    payments
+      .filter((payment) => payment.groupId === id && !payment.deletedAt)
+      .map((payment) =>
+        savePayment({ ...payment, groupId: null, updatedAt: timestamp }),
+      ),
+  );
+  const deleted = { ...group, status: "archived" as const, deletedAt: timestamp, updatedAt: timestamp };
+  await put("groups", deleted);
+  await enqueue("GROUP_DELETE", id, deleted);
+  if (settings?.currentGroupId === id) {
+    await saveSettings({ ...settings, currentGroupId: null, updatedAt: timestamp });
+  }
 }
 
 export async function listPaymentMethods(includeArchived = false) {
@@ -316,20 +183,34 @@ export function getPaymentMethod(id: string) {
   return get<PaymentMethod>("paymentMethods", id);
 }
 
-export function savePaymentMethod(method: PaymentMethod) {
-  return saveWithOutbox("paymentMethods", "PAYMENT_METHOD_UPSERT", method);
+export async function savePaymentMethod(method: PaymentMethod) {
+  await put("paymentMethods", method);
+  await enqueue("PAYMENT_METHOD_UPSERT", method.id, method);
+  return method;
 }
 
 export async function getSettings() {
   return get<UserSettings>("settings", "local");
 }
 
-export function saveSettings(settings: UserSettings) {
-  return saveWithOutbox("settings", "SETTINGS_UPSERT", settings);
+export async function saveSettings(settings: UserSettings) {
+  await put("settings", settings);
+  await enqueue("SETTINGS_UPSERT", settings.id, settings);
+  return settings;
 }
 
 export function listOutbox() {
   return getAll<OutboxEntry>("outbox");
+}
+
+async function enqueue(type: OutboxOperationType, entityId: string, payload: unknown) {
+  await put<OutboxEntry>("outbox", {
+    id: uuid(),
+    type,
+    entityId,
+    payload,
+    createdAt: now(),
+  });
 }
 
 export async function getSyncState() {

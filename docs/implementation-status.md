@@ -23,7 +23,6 @@
 - 変更はOutboxへ記録し、オンライン時に同期APIへ送信する。サーバー未設定でも登録データは失われない。
 - Groupは必須にせず、削除時はPaymentを削除せず `groupId = null` とする。
 - 参照中のPayment Methodは物理削除せず、アーカイブして履歴表示を壊さない。
-- Entityの更新と対応するOutbox追加は同じIndexedDB readwrite transactionで実行し、Group削除時の関連更新も一括でコミットする。
 - PWAアイコンはブランド用アセットが未提供のため、マニフェストでは空配列にしている。本番公開前に192px/512pxのアイコンを追加する。
 
 ## 次の実装単位
