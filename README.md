@@ -29,3 +29,20 @@ pnpm dev
 `/api/sync/push` と `/api/sync/pull` はLocal Firstクライアントが利用するAPI契約として用意しています。現状のPushは未設定を表す503を返すため、変更は端末のOutboxに保持されます。本番同期を有効にする際は、企画書にある `users` / `groups` / `payment_methods` / `payments` / `user_settings` とLast Write WinsをDrizzle/PostgreSQLで実装し、認証・所有権チェックを追加します。
 
 詳細な実装判断と未実装項目は [docs/implementation-status.md](docs/implementation-status.md) を参照してください。
+
+## PostgreSQL / Drizzle
+
+PostgreSQLのテーブル定義は `src/server/db/schema.ts`、初回マイグレーションは `drizzle/` にあります。接続先を `.env.local` の `DATABASE_URL` に設定して実行します。
+
+```bash
+cp .env.example .env.local
+# .env.local の DATABASE_URL を接続先に変更
+pnpm db:check
+pnpm db:migrate
+```
+
+スキーマを変更した場合は、次のコマンドで新しいマイグレーションを生成します。
+
+```bash
+pnpm db:generate
+```
