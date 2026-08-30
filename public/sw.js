@@ -11,12 +11,41 @@ const PRECACHE_URLS = [
   "/icons/icon-512.png",
 ];
 
+function extractStaticAssetUrls(html) {
+  const urls = new Set();
+  const pattern = /(?:src|href)=["'](\/_next\/static\/[^"']+)["']/g;
+  let match;
+  while ((match = pattern.exec(html)) !== null) urls.add(match[1]);
+  return [...urls];
+}
+
+async function precacheAppShell() {
+  const cache = await caches.open(STATIC_CACHE);
+  await cache.addAll(PRECACHE_URLS);
+
+  const assets = new Set();
+  for (const path of PRECACHE_URLS) {
+    const response = await cache.match(path);
+    if (!response || !response.headers.get("Content-Type")?.includes("text/html")) continue;
+    for (const asset of extractStaticAssetUrls(await response.text())) assets.add(asset);
+  }
+
+  await Promise.all(
+    [...assets].map(async (asset) => {
+      try {
+        const networkRequest = new Request(new URL(asset, self.location.origin), { cache: "no-store" });
+        const response = await fetch(networkRequest);
+        if (response.ok) await cache.put(new Request(networkRequest.url), response);
+      } catch {
+        // A single optional asset must not prevent the app shell from installing.
+      }
+    }),
+  );
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches
-      .open(STATIC_CACHE)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
-      .then(() => self.skipWaiting()),
+    precacheAppShell().then(() => self.skipWaiting()),
   );
 });
 

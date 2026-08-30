@@ -1,4 +1,13 @@
 const RUNTIME_CACHE = "payment-log-runtime-v2";
+const warmingRoutes = new Map<string, Promise<void>>();
+
+export const PWA_SHELL_ROUTES = [
+  "/",
+  "/payments",
+  "/groups",
+  "/settings",
+  "/settings/payment-methods",
+] as const;
 
 function isWarmableAsset(url: URL) {
   return url.origin === window.location.origin && url.pathname.startsWith("/_next/static/");
@@ -54,7 +63,16 @@ async function warmOfflineRoute(path: string) {
   }
 }
 
-export async function warmOfflineRoutes(paths: string[]) {
+export async function warmOfflineRoutes(paths: readonly string[]) {
   const uniquePaths = [...new Set(paths)];
-  await Promise.allSettled(uniquePaths.map((path) => warmOfflineRoute(path)));
+  await Promise.allSettled(
+    uniquePaths.map((path) => {
+      const existing = warmingRoutes.get(path);
+      if (existing) return existing;
+
+      const warming = warmOfflineRoute(path).finally(() => warmingRoutes.delete(path));
+      warmingRoutes.set(path, warming);
+      return warming;
+    }),
+  );
 }

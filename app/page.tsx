@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import {
   getSettings,
   listGroups,
@@ -18,6 +17,7 @@ import {
 import { formatYen } from "@/lib/format";
 import type { Group, Payment, PaymentMethod, UserSettings } from "@/lib/types";
 import { PaymentList } from "@/components/payment-list";
+import { OfflineAwareLink } from "@/components/offline-aware-link";
 import { Toast } from "@/components/toast";
 import { warmOfflineRoutes } from "@/lib/pwa";
 
@@ -198,14 +198,14 @@ export default function HomePage() {
           <section className="panel">
             <div className="panel-heading">
               <h2>最近の支払い</h2>
-              <Link className="text-link" href="/payments">すべて見る →</Link>
+              <OfflineAwareLink className="text-link" href="/payments">すべて見る →</OfflineAwareLink>
             </div>
             <PaymentList payments={recent} paymentMethods={methods} groups={groups} />
           </section>
           <section className="panel">
             <div className="panel-heading"><h2>整理するなら</h2></div>
             <p className="helper-text">旅行やイベントごとにCurrent Groupを設定すると、次の支払いに自動で付与されます。</p>
-            <Link className="secondary-button" href="/groups">グループを管理</Link>
+            <OfflineAwareLink className="secondary-button" href="/groups">グループを管理</OfflineAwareLink>
           </section>
           {currentGroup ? <div className="sync-note"><strong>{currentGroup.name}</strong> に支払いを記録中です。</div> : null}
         </aside>

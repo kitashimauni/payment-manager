@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { listGroups, listPayments, getSettings, now, saveGroup, saveSettings, seedDefaultData, uuid } from "@/lib/db";
 import { formatYen } from "@/lib/format";
@@ -64,7 +63,7 @@ export default function GroupsPage() {
           </div>;
         })}
       </div>}
-      <div className="panel" style={{ marginTop: 18 }}><p className="helper-text">Current Groupを設定すると、ホームで登録する支払いに自動でグループが付きます。「なし」に戻せば通常の支払いログに戻ります。</p><Link href="/" className="text-link">ホームで支払いを記録 →</Link></div>
+      <div className="panel" style={{ marginTop: 18 }}><p className="helper-text">Current Groupを設定すると、ホームで登録する支払いに自動でグループが付きます。「なし」に戻せば通常の支払いログに戻ります。</p><OfflineAwareLink href="/" className="text-link">ホームで支払いを記録 →</OfflineAwareLink></div>
     </div>
   );
 }

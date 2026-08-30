@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getSyncState, listOutbox, trySync } from "@/lib/db";
+import { OfflineAwareLink } from "./offline-aware-link";
 import { PwaRegistration } from "./pwa-registration";
 
 const navigation = [
@@ -51,13 +51,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="app-background">
         <header className="topbar">
           <div className="topbar-inner">
-            <Link href="/" className="brand" aria-label="Payment Log ホーム">
+            <OfflineAwareLink href="/" className="brand" aria-label="Payment Log ホーム">
               <span className="brand-mark">¥</span>
               <span>
                 <strong>Payment Log</strong>
                 <small>支払いを、すぐ残す。</small>
               </span>
-            </Link>
+            </OfflineAwareLink>
             <NetworkStatus />
           </div>
         </header>
@@ -66,10 +66,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {navigation.map((item) => {
             const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (
-              <Link key={item.href} href={item.href} className={active ? "nav-item active" : "nav-item"}>
+              <OfflineAwareLink key={item.href} href={item.href} className={active ? "nav-item active" : "nav-item"}>
                 <span className="nav-icon" aria-hidden="true">{item.icon}</span>
                 <span>{item.label}</span>
-              </Link>
+              </OfflineAwareLink>
             );
           })}
         </nav>
