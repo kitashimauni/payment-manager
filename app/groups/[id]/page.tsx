@@ -8,6 +8,7 @@ import { formatYen } from "@/lib/format";
 import type { Group, Payment, PaymentMethod, UserSettings } from "@/lib/types";
 import { PaymentList } from "@/components/payment-list";
 import { Toast } from "@/components/toast";
+import { warmOfflineRoutes } from "@/lib/pwa";
 
 export default function GroupDetailPage() {
   const params = useParams<{ id: string }>();
@@ -31,7 +32,10 @@ export default function GroupDetailPage() {
     setLoading(false);
   }
 
-  useEffect(() => { void refresh(); }, [params.id]);
+  useEffect(() => {
+    void warmOfflineRoutes([`/groups/${params.id}`]);
+    void refresh();
+  }, [params.id]);
 
   const total = useMemo(() => payments.reduce((sum, payment) => sum + payment.amount, 0), [payments]);
 

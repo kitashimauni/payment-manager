@@ -94,8 +94,7 @@ async function handleNavigation(event) {
   } catch {
     const cached =
       (await cachedResponse(RUNTIME_CACHE, event.request)) ||
-      (await cachedResponse(STATIC_CACHE, event.request)) ||
-      (await cachedResponse(STATIC_CACHE, new Request(new URL("/", self.location.origin))));
+      (await cachedResponse(STATIC_CACHE, event.request));
     return cached || offlineResponse("text/html; charset=utf-8");
   }
 }

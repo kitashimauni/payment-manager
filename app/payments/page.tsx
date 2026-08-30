@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listGroups, listPaymentMethods, listPayments, seedDefaultData } from "@/lib/db";
 import type { Group, Payment, PaymentMethod } from "@/lib/types";
 import { PaymentDateHeading, PaymentList } from "@/components/payment-list";
+import { warmOfflineRoutes } from "@/lib/pwa";
 
 export default function PaymentsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -19,6 +20,7 @@ export default function PaymentsPage() {
       setPayments(nextPayments);
       setGroups(nextGroups);
       setMethods(nextMethods);
+      warmOfflineRoutes(nextPayments.slice(0, 50).map((payment) => `/payments/${payment.id}`));
       setLoading(false);
     })();
   }, []);

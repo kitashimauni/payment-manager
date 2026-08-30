@@ -19,6 +19,7 @@ import { formatYen } from "@/lib/format";
 import type { Group, Payment, PaymentMethod, UserSettings } from "@/lib/types";
 import { PaymentList } from "@/components/payment-list";
 import { Toast } from "@/components/toast";
+import { warmOfflineRoutes } from "@/lib/pwa";
 
 export default function HomePage() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -50,6 +51,7 @@ export default function HomePage() {
       setGroups(nextGroups);
       setSettings(nextSettings ?? null);
       setRecent(nextPayments.slice(0, 4));
+      warmOfflineRoutes(nextPayments.slice(0, 4).map((payment) => `/payments/${payment.id}`));
       if (!selectedMethodId) {
         const remembered = window.localStorage.getItem("payment-log:last-method");
         setSelectedMethodId(remembered && nextMethods.some((method) => method.id === remembered) ? remembered : nextMethods[0]?.id ?? "");
@@ -103,6 +105,7 @@ export default function HomePage() {
     await savePayment(payment);
     window.localStorage.setItem("payment-log:last-method", selectedMethodId);
     setRecent((items) => [payment, ...items].slice(0, 4));
+    await warmOfflineRoutes([`/payments/${payment.id}`]);
     setAmount("");
     setTitle("");
     setToast({ message: `${formatYen(numericAmount)}を登録しました`, payment });

@@ -3,10 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "start": "next start",
-    "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "pwa:icons": "node scripts/generate-pwa-icons.mjs",
     "test": "vitest run",
@@ -14,20 +13,24 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },
+  "engines": {
+    "node": ">=26.8.1 <27"
+  },
+  "packageManager": "pnpm@11.21.0",
   "dependencies": {
     "drizzle-orm": "^0.36.4",
-    "next": "14.2.30",
+    "next": "16.3.3",
     "postgres": "^3.4.5",
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
-    "@types/node": "20.14.15",
-    "@types/react": "18.3.3",
-    "@types/react-dom": "18.3.0",
+    "@types/node": "26.4.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
     "fake-indexeddb": "^6.0.0",
     "drizzle-kit": "^0.27.2",
-    "typescript": "5.5.4",
+    "typescript": "7.0.2",
     "vitest": "^2.1.9"
   }
 }

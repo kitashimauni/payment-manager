@@ -5,6 +5,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { listGroups, listPayments, getSettings, now, saveGroup, saveSettings, seedDefaultData, uuid } from "@/lib/db";
 import { formatYen } from "@/lib/format";
 import type { Group, Payment, UserSettings } from "@/lib/types";
+import { OfflineAwareLink } from "@/components/offline-aware-link";
+import { warmOfflineRoutes } from "@/lib/pwa";
 
 export default function GroupsPage() {
   const [groups, setGroups] = useState<Group[]>([]);
@@ -19,6 +21,7 @@ export default function GroupsPage() {
     setGroups(nextGroups);
     setPayments(nextPayments);
     setSettings(nextSettings ?? null);
+    warmOfflineRoutes(nextGroups.map((group) => `/groups/${group.id}`));
     setLoading(false);
   }
 
@@ -58,7 +61,7 @@ export default function GroupsPage() {
           const current = settings?.currentGroupId === group.id;
           return <div className={current ? "group-card current" : "group-card"} key={group.id}>
             {current ? <span className="current-badge">CURRENT GROUP</span> : null}
-            <Link href={`/groups/${group.id}`}><h3>{group.name}</h3><div className="group-card-meta"><span>{stat.count}件</span><span>{formatYen(stat.total)}</span></div></Link>
+            <OfflineAwareLink href={`/groups/${group.id}`}><h3>{group.name}</h3><div className="group-card-meta"><span>{stat.count}件</span><span>{formatYen(stat.total)}</span></div></OfflineAwareLink>
             <button className="small-button ghost" type="button" onClick={() => void setCurrentGroup(current ? null : group.id)}>{current ? "解除する" : "現在のグループにする"}</button>
           </div>;
         })}

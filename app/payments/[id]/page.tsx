@@ -7,6 +7,7 @@ import { formatDateTimeInput } from "@/lib/format";
 import { getPayment, listGroups, listPaymentMethods, now, removePayment, savePayment, seedDefaultData } from "@/lib/db";
 import type { Group, Payment, PaymentMethod } from "@/lib/types";
 import { Toast } from "@/components/toast";
+import { warmOfflineRoutes } from "@/lib/pwa";
 
 export default function PaymentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -23,6 +24,7 @@ export default function PaymentDetailPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    void warmOfflineRoutes([`/payments/${params.id}`]);
     void (async () => {
       await seedDefaultData();
       const [nextPayment, nextMethods, nextGroups] = await Promise.all([getPayment(params.id), listPaymentMethods(true), listGroups()]);
