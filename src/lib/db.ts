@@ -21,6 +21,22 @@ const STORE_NAMES = [
 
 type StoreName = (typeof STORE_NAMES)[number];
 
+export const OUTBOX_CHANGED_EVENT = "payment-manager:outbox-changed";
+
+export function subscribeToOutboxChanges(onChange: () => void) {
+  if (typeof window === "undefined") return () => undefined;
+
+  const handleChange = () => onChange();
+  window.addEventListener(OUTBOX_CHANGED_EVENT, handleChange);
+  return () => window.removeEventListener(OUTBOX_CHANGED_EVENT, handleChange);
+}
+
+function notifyOutboxChanged() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
+  }
+}
+
 const defaultPaymentMethods = ["現金", "Suica", "PayPay", "Visa", "Mastercard", "QUICPay"];
 
 function uuid() {
@@ -169,6 +185,9 @@ function saveWithOutbox<T extends { id: string }>(storeName: StoreName, type: Ou
     transaction.objectStore(storeName).put(value);
     addOutboxOperation(transaction, type, value.id, value);
     complete(value);
+  }).then((saved) => {
+    notifyOutboxChanged();
+    return saved;
   });
 }
 
@@ -227,6 +246,9 @@ export function removePayment(id: string) {
       }
     };
     request.onerror = () => fail(request.error ?? new Error("Payment lookup failed"));
+  }).then((removed) => {
+    notifyOutboxChanged();
+    return removed;
   });
 }
 
@@ -302,6 +324,9 @@ export function removeGroup(id: string) {
       finishRead();
     };
     settingsRequest.onerror = () => fail(settingsRequest.error ?? new Error("Settings lookup failed"));
+  }).then((removed) => {
+    notifyOutboxChanged();
+    return removed;
   });
 }
 
@@ -360,6 +385,7 @@ export async function trySync() {
       const store = transaction.objectStore("outbox");
       outbox.filter((entry) => accepted.has(entry.id)).forEach((entry) => store.delete(entry.id));
       await transactionDone(transaction);
+      notifyOutboxChanged();
     }
     if (result.nextCursor !== undefined) {
       await put<SyncState>("syncState", { id: "default", cursor: result.nextCursor ?? null, lastSyncedAt: now() });
