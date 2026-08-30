@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getSyncState, listOutbox, seedDefaultData, trySync } from "@/lib/db";
 import type { SyncState } from "@/lib/types";
+import { OfflineAwareLink } from "@/components/offline-aware-link";
 
 export default function SettingsPage() {
   const [pending, setPending] = useState(0);
@@ -28,7 +28,7 @@ export default function SettingsPage() {
   return <div className="page-narrow">
     <div className="page-header"><div><div className="eyebrow">Settings</div><h1>設定</h1><p className="lede">Payment Logの使い方と保存状態を確認できます。</p></div></div>
     <div className="settings-grid">
-      <Link className="settings-link" href="/settings/payment-methods"><div><h3>支払い方法</h3><p>追加・名前変更・並び替え・アーカイブ</p></div><span className="row-chevron" aria-hidden="true">›</span></Link>
+      <OfflineAwareLink className="settings-link" href="/settings/payment-methods"><div><h3>支払い方法</h3><p>追加・名前変更・並び替え・アーカイブ</p></div><span className="row-chevron" aria-hidden="true">›</span></OfflineAwareLink>
       <div className="settings-link"><div><h3>データの保存</h3><p>IndexedDB / この端末に保存</p></div><span className="tag">LOCAL FIRST</span></div>
     </div>
     <section className="panel" style={{ marginTop: 16 }}>

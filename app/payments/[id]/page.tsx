@@ -1,12 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { formatDateTimeInput } from "@/lib/format";
 import { getPayment, listGroups, listPaymentMethods, now, removePayment, savePayment, seedDefaultData } from "@/lib/db";
 import type { Group, Payment, PaymentMethod } from "@/lib/types";
 import { Toast } from "@/components/toast";
+import { OfflineAwareLink } from "@/components/offline-aware-link";
+import { warmOfflineRoutes } from "@/lib/pwa";
 
 export default function PaymentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -23,6 +24,7 @@ export default function PaymentDetailPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    void warmOfflineRoutes([`/payments/${params.id}`]);
     void (async () => {
       await seedDefaultData();
       const [nextPayment, nextMethods, nextGroups] = await Promise.all([getPayment(params.id), listPaymentMethods(true), listGroups()]);
@@ -57,11 +59,11 @@ export default function PaymentDetailPage() {
   }
 
   if (loading) return <div className="loading-state">支払いを読み込んでいます…</div>;
-  if (!payment) return <div className="page-narrow"><Link href="/payments" className="back-link">← 履歴に戻る</Link><div className="panel"><div className="empty-state">支払いが見つかりません。</div></div></div>;
+  if (!payment) return <div className="page-narrow"><OfflineAwareLink href="/payments" className="back-link">← 履歴に戻る</OfflineAwareLink><div className="panel"><div className="empty-state">支払いが見つかりません。</div></div></div>;
 
   return (
     <div className="page-narrow">
-      <Link href="/payments" className="back-link">← 履歴に戻る</Link>
+      <OfflineAwareLink href="/payments" className="back-link">← 履歴に戻る</OfflineAwareLink>
       <div className="page-header"><div><div className="eyebrow">Edit payment</div><h1>支払いを編集</h1><p className="lede">名目やグループは後から追加できます。</p></div></div>
       <form className="detail-card panel" onSubmit={submit}>
         <div className="form-grid">

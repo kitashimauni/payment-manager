@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "pwa:icons": "node scripts/generate-pwa-icons.mjs",
     "test": "vitest run",
     "db:check": "drizzle-kit check",
     "db:generate": "drizzle-kit generate",
