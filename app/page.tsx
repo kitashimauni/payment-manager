@@ -1,13 +1,13 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import {
   getSettings,
   listGroups,
   listPaymentMethods,
   listPayments,
   now,
+  removePayment,
   savePayment,
   saveSettings,
   seedDefaultData,
@@ -17,7 +17,9 @@ import {
 import { formatYen } from "@/lib/format";
 import type { Group, Payment, PaymentMethod, UserSettings } from "@/lib/types";
 import { PaymentList } from "@/components/payment-list";
+import { OfflineAwareLink } from "@/components/offline-aware-link";
 import { Toast } from "@/components/toast";
+import { warmOfflineRoutes } from "@/lib/pwa";
 
 export default function HomePage() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -105,14 +107,13 @@ export default function HomePage() {
     setAmount("");
     setTitle("");
     setToast({ message: `${formatYen(numericAmount)}を登録しました`, payment });
+    void warmOfflineRoutes([`/payments/${payment.id}`]);
     void trySync();
   }
 
   async function undo() {
     if (!toast?.payment) return;
-    const restored = { ...toast.payment, deletedAt: now(), updatedAt: now() };
-    // Keep the operation local and create a compensating update in the outbox.
-    await savePayment({ ...restored, deletedAt: null, updatedAt: now() });
+    await removePayment(toast.payment.id);
     setRecent((items) => items.filter((item) => item.id !== toast.payment?.id));
     setToast({ message: "登録を取り消しました" });
   }
@@ -197,14 +198,14 @@ export default function HomePage() {
           <section className="panel">
             <div className="panel-heading">
               <h2>最近の支払い</h2>
-              <Link className="text-link" href="/payments">すべて見る →</Link>
+              <OfflineAwareLink className="text-link" href="/payments">すべて見る →</OfflineAwareLink>
             </div>
             <PaymentList payments={recent} paymentMethods={methods} groups={groups} />
           </section>
           <section className="panel">
             <div className="panel-heading"><h2>整理するなら</h2></div>
             <p className="helper-text">旅行やイベントごとにCurrent Groupを設定すると、次の支払いに自動で付与されます。</p>
-            <Link className="secondary-button" href="/groups">グループを管理</Link>
+            <OfflineAwareLink className="secondary-button" href="/groups">グループを管理</OfflineAwareLink>
           </section>
           {currentGroup ? <div className="sync-note"><strong>{currentGroup.name}</strong> に支払いを記録中です。</div> : null}
         </aside>

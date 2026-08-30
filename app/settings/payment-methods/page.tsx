@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { listPaymentMethods, now, savePaymentMethod, seedDefaultData, uuid } from "@/lib/db";
 import type { PaymentMethod } from "@/lib/types";
+import { OfflineAwareLink } from "@/components/offline-aware-link";
 
 export default function PaymentMethodsPage() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -58,7 +58,7 @@ export default function PaymentMethodsPage() {
   if (loading) return <div className="loading-state">支払い方法を読み込んでいます…</div>;
 
   return <div className="page-narrow">
-    <Link href="/settings" className="back-link">← 設定に戻る</Link>
+    <OfflineAwareLink href="/settings" className="back-link">← 設定に戻る</OfflineAwareLink>
     <div className="page-header"><div><div className="eyebrow">Payment methods</div><h1>支払い方法</h1><p className="lede">よく使う順に並べておくと、入力がさらに速くなります。</p></div></div>
     <form className="group-add" onSubmit={add}><input className="text-input" value={name} onChange={(event) => setName(event.target.value.slice(0, 40))} placeholder="例：楽天Pay、デビットカード" maxLength={40} aria-label="支払い方法名" /><button className="secondary-button" type="submit">＋ 追加</button></form>
     <section className="method-panel"><div className="panel-heading"><h2>利用中</h2><span className="helper-text">{activeMethods.length}件</span></div>

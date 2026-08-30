@@ -7,6 +7,10 @@ export const metadata: Metadata = {
   description: "支払った瞬間に、数秒で記録できる支払いログ",
   applicationName: "Payment Log",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/icons/icon-192.png",
+    apple: "/icons/icon-192.png",
+  },
 };
 
 export const viewport: Viewport = {
