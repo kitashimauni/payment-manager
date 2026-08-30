@@ -6,7 +6,6 @@ import { listGroups, listPayments, getSettings, now, saveGroup, saveSettings, se
 import { formatYen } from "@/lib/format";
 import type { Group, Payment, UserSettings } from "@/lib/types";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
-import { warmOfflineRoutes } from "@/lib/pwa";
 
 export default function GroupsPage() {
   const [groups, setGroups] = useState<Group[]>([]);
@@ -21,7 +20,6 @@ export default function GroupsPage() {
     setGroups(nextGroups);
     setPayments(nextPayments);
     setSettings(nextSettings ?? null);
-    warmOfflineRoutes(nextGroups.map((group) => `/groups/${group.id}`));
     setLoading(false);
   }
 
