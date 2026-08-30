@@ -23,6 +23,7 @@ import { warmOfflineRoutes } from "@/lib/pwa";
 
 export default function HomePage() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [displayMethods, setDisplayMethods] = useState<PaymentMethod[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [recent, setRecent] = useState<Payment[]>([]);
@@ -41,13 +42,15 @@ export default function HomePage() {
   async function refresh() {
     try {
       await seedDefaultData();
-      const [nextMethods, nextGroups, nextSettings, nextPayments] = await Promise.all([
+      const [nextMethods, nextDisplayMethods, nextGroups, nextSettings, nextPayments] = await Promise.all([
         listPaymentMethods(),
+        listPaymentMethods(true),
         listGroups(),
         getSettings(),
         listPayments(),
       ]);
       setMethods(nextMethods);
+      setDisplayMethods(nextDisplayMethods);
       setGroups(nextGroups);
       setSettings(nextSettings ?? null);
       setRecent(nextPayments.slice(0, 4));
@@ -200,7 +203,7 @@ export default function HomePage() {
               <h2>最近の支払い</h2>
               <OfflineAwareLink className="text-link" href="/payments">すべて見る →</OfflineAwareLink>
             </div>
-            <PaymentList payments={recent} paymentMethods={methods} groups={groups} />
+            <PaymentList payments={recent} paymentMethods={displayMethods} groups={groups} />
           </section>
           <section className="panel">
             <div className="panel-heading"><h2>整理するなら</h2></div>

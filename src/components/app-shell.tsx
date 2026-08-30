@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getSyncState, listOutbox, trySync } from "@/lib/db";
+import { listOutbox, subscribeToOutboxChanges, trySync } from "@/lib/db";
 import { OfflineAwareLink } from "./offline-aware-link";
 import { PwaRegistration } from "./pwa-registration";
 
@@ -14,23 +14,44 @@ const navigation = [
 ];
 
 function NetworkStatus() {
-  const [online, setOnline] = useState(true);
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
   const [pending, setPending] = useState(0);
 
   useEffect(() => {
-    const update = () => setOnline(navigator.onLine);
-    const refresh = async () => {
-      setPending((await listOutbox()).length);
-      await trySync();
-      setPending((await listOutbox()).length);
+    let active = true;
+    const update = () => {
+      if (active) setOnline(navigator.onLine);
     };
-    update();
+    const refreshPending = async () => {
+      try {
+        const nextPending = (await listOutbox()).length;
+        if (active) setPending(nextPending);
+      } catch {
+        if (active) setPending(0);
+      }
+    };
+    const refresh = async () => {
+      update();
+      await refreshPending();
+      try {
+        await trySync();
+      } catch {
+        // Keep the locally calculated count when sync cannot be attempted.
+      }
+      await refreshPending();
+    };
+    const handleOnline = () => void refresh();
+    const handleOffline = () => update();
+    const unsubscribeFromOutbox = subscribeToOutboxChanges(() => void refreshPending());
+
     void refresh();
-    window.addEventListener("online", refresh);
-    window.addEventListener("offline", update);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
     return () => {
-      window.removeEventListener("online", refresh);
-      window.removeEventListener("offline", update);
+      active = false;
+      unsubscribeFromOutbox();
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, []);
 
