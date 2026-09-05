@@ -16,6 +16,7 @@
 | Sync API | 契約のみ | `/api/sync/push` と `/api/sync/pull` を用意。Pushは未設定を返しOutboxを保持 |
 | 認証 | 未実装 | 本番同期と一緒に追加する |
 | PostgreSQL/Drizzle | 実装済み | `src/server/db/schema.ts` と `drizzle/` に所有ユーザー、グループ、支払い方法、支払い、ユーザー設定の定義と初回マイグレーションを追加 |
+| 自動テスト/CI | 実装済み | IndexedDBの主要フローをVitestで検証し、GitHub Actionsでmise経由のinstall / typecheck / test / buildを実行 |
 
 ## 重要な実装判断
 
@@ -29,6 +30,7 @@
 - サーバー側のIDはクライアント生成値をそのまま保持し、ユーザーごとの複合主キーで初期決済手段IDの衝突を防ぐ。
 - Paymentの支払い方法・Group参照はユーザーIDを含む複合外部キーにし、ユーザーをまたぐ参照をDBでも拒否する。
 - PWAは192px/512pxのアイコンをマニフェストへ登録し、主要ナビゲーションとNext.jsの静的アセットをService Workerでキャッシュする。Payment/Groupの詳細リンクは表示領域の近くに入った時点で詳細HTMLと参照アセットを順次ウォームし、登録直後のウォームは入力完了を待たずにバックグラウンドで実行する。オフラインの詳細リンクはドキュメント遷移で開く。ナビゲーション、RSC、API、その他のアセットは用途別にオフライン応答を分離し、未キャッシュの動的URLへホームHTMLを誤返却しない。
+- Payment登録・編集・論理削除、Group操作、Payment Method管理、Outbox同期の成功/失敗はVitestで継続的に検証し、GitHub Actionsではリポジトリのmise設定を使ってNode 26の同じ検証手順を実行する。
 
 ## 残りの実装単位
 
