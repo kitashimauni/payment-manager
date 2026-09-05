@@ -63,7 +63,7 @@ function NetworkStatus() {
   );
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ children, authStatus }: { children: React.ReactNode; authStatus: React.ReactNode }) {
   const pathname = usePathname();
 
   return (
@@ -79,7 +79,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <small>支払いを、すぐ残す。</small>
               </span>
             </OfflineAwareLink>
-            <NetworkStatus />
+            <div className="topbar-actions">
+              {authStatus}
+              <NetworkStatus />
+            </div>
           </div>
         </header>
         <main className="page-container">{children}</main>

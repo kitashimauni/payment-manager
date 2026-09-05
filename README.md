@@ -25,9 +25,27 @@ mise exec -- pnpm dev
 - グループ作成、Current Group設定、詳細・合計、削除時の支払いグループ解除
 - 支払い方法の追加、名前変更、並び替え、アーカイブ・再表示
 
+## 認証（Issue #1）
+
+認証基盤はAuth.js + Google OAuthです。`AUTH_SECRET`、`AUTH_GOOGLE_ID`、`AUTH_GOOGLE_SECRET`、`DATABASE_URL`の4つがすべて設定されている場合だけログインを有効にします。いずれかが未設定、または認証用データベースが一時的に利用できない場合は、画面に `Local Only` を表示してローカル記録をそのまま利用できます。
+
+Google Cloud側の承認済みリダイレクトURIには、開発時は次を登録してください。
+
+```text
+http://localhost:3000/api/auth/callback/google
+```
+
+`AUTH_SECRET`はNode.js 26で生成できます。
+
+```bash
+mise exec -- node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+アプリ内の`users.id`はAuth.js/Drizzleが生成するUUIDとし、Googleのstable subjectは`accounts.provider = google`と`accounts.provider_account_id`の組み合わせで保持します。初回ログイン時に既存のIndexedDBデータを自動アップロード・削除・統合することはありません。データ移行は、認証済み同期を実装する段階で明示的な操作として追加します。
+
 ## 同期について
 
-`/api/sync/push` と `/api/sync/pull` はLocal Firstクライアントが利用するAPI契約として用意しています。現状のPushは未設定を表す503を返すため、変更は端末のOutboxに保持されます。本番同期を有効にする際は、企画書にある `users` / `groups` / `payment_methods` / `payments` / `user_settings` とLast Write WinsをDrizzle/PostgreSQLで実装し、認証・所有権チェックを追加します。
+`/api/sync/push` と `/api/sync/pull` はLocal Firstクライアントが利用するAPI契約として用意しています。認証は導入済みですが、Push/Pullはまだ実装していないため、現状のPushは未設定を表す503を返し、変更は端末のOutboxに保持されます。本番同期を有効にする際は、企画書にある `users` / `groups` / `payment_methods` / `payments` / `user_settings` とLast Write WinsをDrizzle/PostgreSQLで実装し、認証・所有権チェックを接続します。
 
 詳細な実装判断と未実装項目は [docs/implementation-status.md](docs/implementation-status.md) を参照してください。
 
