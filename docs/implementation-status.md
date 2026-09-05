@@ -27,6 +27,7 @@
 - 参照中のPayment Methodは物理削除せず、アーカイブして履歴表示を壊さない。
 - Payment Methodは新規入力候補にはactiveのみを使い、ホームと履歴の支払い表示にはアーカイブ済みを含む一覧を使う。
 - 認証はAuth.js + Google OAuthとし、アプリ内の`users.id`はAuth.js/Drizzleが生成するUUIDとする。Googleの安定したsubject claimは`accounts`の`provider`と`provider_account_id`で保持する。認証に必要な環境変数またはPostgreSQLが揃わない場合はproviderを有効化せず、Local Onlyで利用できるようにする。
+- `users.email`は既存の同期用ユーザー行を壊さないようnullableで追加する。認証情報から正しくbackfillできる移行を定義できるまでは、推測値で埋めたり`NOT NULL`へ変更したりしない。
 - セッションはJWT方式とし、Issue #1ではOAuthアカウントリンク用の`accounts`だけを追加する。Push/Pull、所有権チェック、Outboxの初回移行は認証済み同期の別段階で実装する。
 - 初回ログインでは既存のIndexedDBデータを自動でサーバーへ送信、削除、統合しない。同期段階でユーザーが明示的に選択できる移行操作を追加する。
 - Entityの更新と対応するOutbox追加は同じIndexedDB readwrite transactionで実行し、Group削除時の関連更新も一括でコミットする。
