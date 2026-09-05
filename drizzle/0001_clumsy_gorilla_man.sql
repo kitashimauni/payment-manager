@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS "accounts" (
 );
 --> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "name" text;--> statement-breakpoint
-ALTER TABLE "users" ADD COLUMN "email" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "users" ADD COLUMN "email" text;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "email_verified" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "image" text;--> statement-breakpoint
 DO $$ BEGIN

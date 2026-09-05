@@ -41,7 +41,7 @@ http://localhost:3000/api/auth/callback/google
 mise exec -- node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
 ```
 
-Googleのsubject claimを`google:<sub>`へ変換した値を`users.id`に保存します。provider名を含めることで、将来別のOAuth providerを追加しても識別子が衝突しません。初回ログイン時に既存のIndexedDBデータを自動アップロード・削除・統合することはありません。データ移行は、認証済み同期を実装する段階で明示的な操作として追加します。
+アプリ内の`users.id`はAuth.js/Drizzleが生成するUUIDとし、Googleのstable subjectは`accounts.provider = google`と`accounts.provider_account_id`の組み合わせで保持します。初回ログイン時に既存のIndexedDBデータを自動アップロード・削除・統合することはありません。データ移行は、認証済み同期を実装する段階で明示的な操作として追加します。
 
 ## 同期について
 

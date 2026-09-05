@@ -1,7 +1,6 @@
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
-import { googleUserId } from "@/lib/auth-identity";
 import { db } from "@/server/db/client";
 import { accounts, users } from "@/server/db/schema";
 
@@ -27,14 +26,6 @@ const googleProvider = authEnabled
   ? Google({
       clientId: googleClientId,
       clientSecret: googleClientSecret,
-      profile(profile) {
-        return {
-          id: googleUserId(profile.sub),
-          name: profile.name,
-          email: profile.email,
-          image: profile.picture,
-        };
-      },
     })
   : null;
 

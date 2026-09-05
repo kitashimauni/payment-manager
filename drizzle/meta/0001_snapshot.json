@@ -670,7 +670,7 @@
           "name": "email",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "email_verified": {
           "name": "email_verified",

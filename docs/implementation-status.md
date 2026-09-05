@@ -14,7 +14,7 @@
 | Local First | 実装済み | IndexedDBの `payments` / `groups` / `paymentMethods` / `settings` / `outbox` / `syncState` |
 | オフライン利用 | 実装済み | Service Worker、通信状態表示、ローカル登録 |
 | Sync API | 契約のみ | `/api/sync/push` と `/api/sync/pull` を用意。Pushは未設定を返しOutboxを保持 |
-| 認証 | Issue #1の基盤を実装済み | Auth.js + Google OAuth、`google:<sub>`のユーザーID、未設定時のLocal Only表示、OAuth `accounts`テーブル |
+| 認証 | Issue #1の基盤を実装済み | Auth.js + Google OAuth、Auth.js生成のUUIDユーザーID、未設定時のLocal Only表示、OAuth `accounts`テーブル |
 | PostgreSQL/Drizzle | 実装済み | `src/server/db/schema.ts` と `drizzle/` にAuth.jsのユーザー/アカウント、および所有ユーザー、グループ、支払い方法、支払い、ユーザー設定の定義を追加 |
 | 自動テスト/CI | 実装済み | IndexedDBの主要フローをVitestで検証し、GitHub Actionsでmise経由のinstall / typecheck / test / buildを実行 |
 
@@ -26,7 +26,7 @@
 - Groupは必須にせず、削除時はPaymentを削除せず `groupId = null` とする。
 - 参照中のPayment Methodは物理削除せず、アーカイブして履歴表示を壊さない。
 - Payment Methodは新規入力候補にはactiveのみを使い、ホームと履歴の支払い表示にはアーカイブ済みを含む一覧を使う。
-- 認証はAuth.js + Google OAuthとし、Googleの安定したsubject claimを`google:<sub>`として`users.id`に保存する。認証に必要な環境変数またはPostgreSQLが揃わない場合はproviderを有効化せず、Local Onlyで利用できるようにする。
+- 認証はAuth.js + Google OAuthとし、アプリ内の`users.id`はAuth.js/Drizzleが生成するUUIDとする。Googleの安定したsubject claimは`accounts`の`provider`と`provider_account_id`で保持する。認証に必要な環境変数またはPostgreSQLが揃わない場合はproviderを有効化せず、Local Onlyで利用できるようにする。
 - セッションはJWT方式とし、Issue #1ではOAuthアカウントリンク用の`accounts`だけを追加する。Push/Pull、所有権チェック、Outboxの初回移行は認証済み同期の別段階で実装する。
 - 初回ログインでは既存のIndexedDBデータを自動でサーバーへ送信、削除、統合しない。同期段階でユーザーが明示的に選択できる移行操作を追加する。
 - Entityの更新と対応するOutbox追加は同じIndexedDB readwrite transactionで実行し、Group削除時の関連更新も一括でコミットする。
