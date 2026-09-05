@@ -22,16 +22,42 @@ const timestampColumns = {
 export const groupStatus = pgEnum("group_status", ["active", "archived"]);
 
 /**
- * User IDs are text because the authentication provider has not been selected
- * yet. This keeps the schema compatible with OAuth subject IDs as well as
- * UUID-based providers. Entity IDs are scoped by user in the tables below so
- * deterministic local IDs (such as the seeded payment-method IDs) are safe to
- * use for more than one account.
+ * Auth.js stores the provider subject in this key. The Google adapter prefixes
+ * the stable subject with `google:` so another provider can be added without
+ * risking an ID collision.
  */
 export const users = pgTable("users", {
   id: text("id").primaryKey(),
+  name: text("name"),
+  email: text("email").notNull().unique(),
+  emailVerified: timestamp("email_verified", { withTimezone: true, mode: "date" }),
+  image: text("image"),
   ...timestampColumns,
 });
+
+/**
+ * OAuth account links required by the Auth.js Drizzle adapter. Sessions are
+ * JWT-based in this phase, so a sessions table is intentionally not needed.
+ */
+export const accounts = pgTable(
+  "accounts",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    provider: text("provider").notNull(),
+    providerAccountId: text("provider_account_id").notNull(),
+    refresh_token: text("refresh_token"),
+    access_token: text("access_token"),
+    expires_at: integer("expires_at"),
+    token_type: text("token_type"),
+    scope: text("scope"),
+    id_token: text("id_token"),
+    session_state: text("session_state"),
+  },
+  (table) => [primaryKey({ columns: [table.provider, table.providerAccountId] })],
+);
 
 export const groups = pgTable(
   "groups",
@@ -137,6 +163,8 @@ export const userSettings = pgTable(
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type Account = typeof accounts.$inferSelect;
+export type NewAccount = typeof accounts.$inferInsert;
 export type Group = typeof groups.$inferSelect;
 export type NewGroup = typeof groups.$inferInsert;
 export type PaymentMethod = typeof paymentMethods.$inferSelect;
