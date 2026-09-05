@@ -45,7 +45,7 @@ mise exec -- node -e "console.log(require('node:crypto').randomBytes(32).toStrin
 
 ## 同期について
 
-`/api/sync/push` と `/api/sync/pull` はLocal Firstクライアントが利用するAPI契約として用意しています。認証は導入済みですが、Push/Pullはまだ実装していないため、現状のPushは未設定を表す503を返し、変更は端末のOutboxに保持されます。本番同期を有効にする際は、企画書にある `users` / `groups` / `payment_methods` / `payments` / `user_settings` とLast Write WinsをDrizzle/PostgreSQLで実装し、認証・所有権チェックを接続します。
+`/api/sync/push` は認証済みユーザーのOutboxをPostgreSQLへ一方向同期します。未ログイン、認証設定未完了、またはサーバー未設定の場合はエラーを返し、クライアントはOutboxを保持します。Pushでは `users` / `groups` / `payment_methods` / `payments` / `user_settings` をサーバー側の`user_id`でupsertし、Pullとcursor、Last Write Winsは後続段階で実装します。
 
 詳細な実装判断と未実装項目は [docs/implementation-status.md](docs/implementation-status.md) を参照してください。
 

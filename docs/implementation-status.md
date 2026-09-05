@@ -13,7 +13,7 @@
 | Payment Method | 実装済み | 追加、名称変更、並び替え、アーカイブ、再表示 |
 | Local First | 実装済み | IndexedDBの `payments` / `groups` / `paymentMethods` / `settings` / `outbox` / `syncState` |
 | オフライン利用 | 実装済み | Service Worker、通信状態表示、ローカル登録 |
-| Sync API | 契約のみ | `/api/sync/push` と `/api/sync/pull` を用意。Pushは未設定を返しOutboxを保持 |
+| Sync API | Push実装済み | 認証済み`POST /api/sync/push`でOutboxをPostgreSQLへupsert。未認証・未設定時はOutboxを保持し、Pullは契約のみ |
 | 認証 | Issue #1の基盤を実装済み | Auth.js + Google OAuth、Auth.js生成のUUIDユーザーID、未設定時のLocal Only表示、OAuth `accounts`テーブル |
 | PostgreSQL/Drizzle | 実装済み | `src/server/db/schema.ts` と `drizzle/` にAuth.jsのユーザー/アカウント、および所有ユーザー、グループ、支払い方法、支払い、ユーザー設定の定義を追加 |
 | 自動テスト/CI | 実装済み | IndexedDBの主要フローをVitestで検証し、GitHub Actionsでmise経由のinstall / typecheck / test / buildを実行 |
@@ -29,7 +29,9 @@
 - 認証はAuth.js + Google OAuthとし、アプリ内の`users.id`はAuth.js/Drizzleが生成するUUIDとする。Googleの安定したsubject claimは`accounts`の`provider`と`provider_account_id`で保持する。認証に必要な環境変数またはPostgreSQLが揃わない場合はproviderを有効化せず、Local Onlyで利用できるようにする。
 - `users.email`は既存の同期用ユーザー行を壊さないようnullableで追加する。認証情報から正しくbackfillできる移行を定義できるまでは、推測値で埋めたり`NOT NULL`へ変更したりしない。
 - セッションはJWT方式とし、Issue #1ではOAuthアカウントリンク用の`accounts`だけを追加する。Push/Pull、所有権チェック、Outboxの初回移行は認証済み同期の別段階で実装する。
-- 初回ログインでは既存のIndexedDBデータを自動でサーバーへ送信、削除、統合しない。同期段階でユーザーが明示的に選択できる移行操作を追加する。
+- 初回ログインでは既存のIndexedDBデータを削除・統合しない。ログイン後は既存Outboxを認証済みPushの送信対象とし、失敗時は端末に保持する。サーバーデータとの明示的な統合操作は後続段階で追加する。
+- Pushはリレーションの順序を保つためGroup、Payment Method、Payment、Settingsの順に処理し、既存のLocal First初期Payment Methodはサーバー側で必要時に作成する。
+- Push段階では受信順のupsertを行い、古い更新の勝敗を決める処理は追加しない。cursorとLast Write WinsはPull・競合処理の段階で実装する。
 - Entityの更新と対応するOutbox追加は同じIndexedDB readwrite transactionで実行し、Group削除時の関連更新も一括でコミットする。
 - サーバー側のIDはクライアント生成値をそのまま保持し、ユーザーごとの複合主キーで初期決済手段IDの衝突を防ぐ。
 - Paymentの支払い方法・Group参照はユーザーIDを含む複合外部キーにし、ユーザーをまたぐ参照をDBでも拒否する。
@@ -38,7 +40,6 @@
 
 ## 残りの実装単位
 
-1. Pushの認証、所有権チェック、Outbox移行を実装する。
-2. PullのcursorとLast Write Winsを実装する。
-3. サーバー変更をIndexedDBへ適用するPull処理と競合検知を追加する。
-4. CSV/JSON Export、集計、検索をPhase 2として追加する。
+1. PullのcursorとLast Write Winsを実装する。
+2. サーバー変更をIndexedDBへ適用するPull処理と競合検知を追加する。
+3. CSV/JSON Export、集計、検索をPhase 2として追加する。
