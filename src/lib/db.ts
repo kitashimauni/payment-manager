@@ -7,6 +7,7 @@ import type {
   SyncState,
   UserSettings,
 } from "./types";
+import { defaultPaymentMethods } from "./default-payment-methods";
 
 const DB_NAME = "payment-manager-local";
 const DB_VERSION = 1;
@@ -36,8 +37,6 @@ function notifyOutboxChanged() {
     window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
   }
 }
-
-const defaultPaymentMethods = ["現金", "Suica", "PayPay", "Visa", "Mastercard", "QUICPay"];
 
 function uuid() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
