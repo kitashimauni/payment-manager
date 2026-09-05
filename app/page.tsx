@@ -20,6 +20,7 @@ import { PaymentList } from "@/components/payment-list";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
 import { Toast } from "@/components/toast";
 import { warmOfflineRoutes } from "@/lib/pwa";
+import { createPayment } from "@/lib/payment";
 
 export default function HomePage() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -93,17 +94,14 @@ export default function HomePage() {
       return;
     }
     const timestamp = now();
-    const payment: Payment = {
+    const payment = createPayment({
       id: uuid(),
       amount: numericAmount,
       paymentMethodId: selectedMethodId,
-      title: title.trim() || null,
-      groupId: settings?.currentGroupId ?? null,
-      paidAt: timestamp,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      deletedAt: null,
-    };
+      title,
+      currentGroupId: settings?.currentGroupId,
+      timestamp,
+    });
     await savePayment(payment);
     window.localStorage.setItem("payment-log:last-method", selectedMethodId);
     setRecent((items) => [payment, ...items].slice(0, 4));

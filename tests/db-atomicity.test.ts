@@ -24,6 +24,7 @@ import {
   trySync,
 } from "../src/lib/db";
 import type { Payment, PaymentMethod } from "../src/lib/types";
+import { createPayment } from "../src/lib/payment";
 
 const databaseName = "payment-manager-local";
 
@@ -89,6 +90,31 @@ describe("IndexedDB entity/outbox atomicity", () => {
     expect(await getPayment(edited.id)).toMatchObject({ id: edited.id, deletedAt: expect.any(String) });
     expect((await listPayments()).some((item) => item.id === edited.id)).toBe(false);
     expect((await listOutbox()).some((entry) => entry.entityId === edited.id && entry.type === "PAYMENT_DELETE")).toBe(true);
+  });
+
+  it("automatically assigns the current group when creating a payment", async () => {
+    const currentGroup = group("current-group-flow");
+    const settings = {
+      id: "local" as const,
+      currentGroupId: currentGroup.id,
+      createdAt: currentGroup.createdAt,
+      updatedAt: currentGroup.updatedAt,
+    };
+
+    await saveGroup(currentGroup);
+    await saveSettings(settings);
+    const saved = createPayment({
+      id: "current-group-payment",
+      amount: 1800,
+      paymentMethodId: "default-method-0",
+      title: "",
+      currentGroupId: (await getSettings())?.currentGroupId,
+      timestamp: new Date().toISOString(),
+    });
+    await savePayment(saved);
+
+    expect(saved.groupId).toBe(currentGroup.id);
+    expect((await getPayment(saved.id))?.groupId).toBe(currentGroup.id);
   });
 
   it("rolls back the payment when the outbox write fails", async () => {
