@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { AuthStatus } from "@/components/auth-status";
+import { SessionProvider } from "@/components/session-provider";
 
 export const metadata: Metadata = {
   title: "Payment Log — 支払いを、すぐ残す。",
@@ -24,7 +25,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="ja">
       <body>
-        <AppShell authStatus={<AuthStatus />}>{children}</AppShell>
+        <SessionProvider>
+          <AppShell authStatus={<AuthStatus />}>{children}</AppShell>
+        </SessionProvider>
       </body>
     </html>
   );

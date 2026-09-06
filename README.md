@@ -41,11 +41,11 @@ http://localhost:3000/api/auth/callback/google
 mise exec -- node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
 ```
 
-アプリ内の`users.id`はAuth.js/Drizzleが生成するUUIDとし、Googleのstable subjectは`accounts.provider = google`と`accounts.provider_account_id`の組み合わせで保持します。初回ログイン時に既存のIndexedDBデータを自動アップロード・削除・統合することはありません。データ移行は、認証済み同期を実装する段階で明示的な操作として追加します。
+アプリ内の`users.id`はAuth.js/Drizzleが生成するUUIDとし、Googleのstable subjectは`accounts.provider = google`と`accounts.provider_account_id`の組み合わせで保持します。初回ログイン後も、確認ボタンを押すまで既存のIndexedDBデータをサーバーへ送信しません。確認後は既存Outboxをこのアカウントへ送信しますが、データの削除や統合は行いません。
 
 ## 同期について
 
-`/api/sync/push` は認証済みユーザーのOutboxをPostgreSQLへ一方向同期します。未ログイン、認証設定未完了、またはサーバー未設定の場合はエラーを返し、クライアントはOutboxを保持します。Pushでは `users` / `groups` / `payment_methods` / `payments` / `user_settings` をサーバー側の`user_id`でupsertし、Pullとcursor、Last Write Winsは後続段階で実装します。
+`/api/sync/push` は、端末とアカウントの紐付けを確認した認証済みユーザーのOutboxをPostgreSQLへ一方向同期します。未ログイン、確認前、認証設定未完了、またはサーバー未設定の場合はエラーまたは送信停止となり、クライアントはOutboxを保持します。Pushでは `users` / `groups` / `payment_methods` / `payments` / `user_settings` をサーバー側の`user_id`でupsertし、Pullとcursor、Last Write Winsは後続段階で実装します。
 
 詳細な実装判断と未実装項目は [docs/implementation-status.md](docs/implementation-status.md) を参照してください。
 

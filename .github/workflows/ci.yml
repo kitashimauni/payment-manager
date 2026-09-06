@@ -12,6 +12,20 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: payment_manager
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Check out repository
@@ -23,10 +37,18 @@ jobs:
       - name: Install dependencies
         run: mise exec -- pnpm install --frozen-lockfile
 
+      - name: Apply database migrations
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/payment_manager
+        run: mise exec -- pnpm db:migrate
+
       - name: Run typecheck
         run: mise exec -- pnpm typecheck
 
       - name: Run tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/payment_manager
+          SYNC_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/payment_manager
         run: mise exec -- pnpm test
 
       - name: Run production build

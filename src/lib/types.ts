@@ -58,6 +58,8 @@ export type SyncState = {
   id: "default";
   cursor: string | null;
   lastSyncedAt: string | null;
+  migrationConfirmed: boolean;
+  syncOwnerUserId: string | null;
 };
 
 export type PaymentWithRelations = Payment & {

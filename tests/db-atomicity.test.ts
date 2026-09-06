@@ -20,6 +20,7 @@ import {
   savePayment,
   savePaymentMethod,
   saveSettings,
+  confirmSyncMigration,
   subscribeToOutboxChanges,
   trySync,
 } from "../src/lib/db";
@@ -246,13 +247,24 @@ describe("IndexedDB entity/outbox atomicity", () => {
     expect((await listPaymentMethods(true)).find((method) => method.id === historicalPayment.paymentMethodId)?.name).toBe(archived.name);
   });
 
+  it("does not push local data before migration confirmation", async () => {
+    await savePayment(payment("sync-confirmation-gate"));
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(trySync("unconfirmed-user")).resolves.toBe("pending");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
   it("keeps the outbox when sync fails", async () => {
     const pendingPayment = payment("sync-failure");
     await savePayment(pendingPayment);
+    await confirmSyncMigration("test-user");
     const before = await listOutbox();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }));
 
-    await expect(trySync()).resolves.toBe("pending");
+    await expect(trySync("test-user")).resolves.toBe("pending");
 
     expect(await listOutbox()).toEqual(before);
     fetchMock.mockRestore();
@@ -260,6 +272,7 @@ describe("IndexedDB entity/outbox atomicity", () => {
 
   it("notifies subscribers after sync removes accepted outbox entries", async () => {
     const outbox = await listOutbox();
+    await confirmSyncMigration("test-user");
     const listener = vi.fn();
     const unsubscribe = subscribeToOutboxChanges(listener);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -268,11 +281,20 @@ describe("IndexedDB entity/outbox atomicity", () => {
       }),
     );
 
-    await expect(trySync()).resolves.toBe("synced");
+    await expect(trySync("test-user")).resolves.toBe("synced");
 
     expect(listener).toHaveBeenCalledTimes(1);
     expect(await listOutbox()).toEqual([]);
     fetchMock.mockRestore();
     unsubscribe();
+  });
+
+  it("stops pushing when the authenticated account differs from the sync owner", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(trySync("different-user")).resolves.toBe("pending");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
   });
 });
