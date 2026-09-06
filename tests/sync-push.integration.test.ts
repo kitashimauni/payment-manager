@@ -56,6 +56,8 @@ integrationDescribe("authenticated sync push", () => {
   });
 
   afterAll(async () => {
+    if (!database || !tables || !sqlClient) return;
+
     await database.delete(tables.users).where(eq(tables.users.id, userId));
     await database.delete(tables.users).where(eq(tables.users.id, foreignUserId));
     await sqlClient.end({ timeout: 1 });
