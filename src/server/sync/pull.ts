@@ -11,14 +11,12 @@ export type SyncEntityKind = (typeof syncEntityKinds)[number];
 const entityKindOrder = new Map<SyncEntityKind, number>(syncEntityKinds.map((kind, index) => [kind, index]));
 
 export type PullCursor = {
-  version: 1;
-  updatedAt: string;
-  kind: SyncEntityKind;
-  id: string;
+  version: 2;
+  syncVersion: string;
 };
 
 export type SyncPosition = {
-  updatedAt: Date;
+  syncVersion: bigint;
   kind: SyncEntityKind;
   id: string;
 };
@@ -36,10 +34,6 @@ export class PullValidationError extends Error {
   }
 }
 
-function isSyncEntityKind(value: unknown): value is SyncEntityKind {
-  return typeof value === "string" && syncEntityKinds.includes(value as SyncEntityKind);
-}
-
 function compareStrings(left: string, right: string) {
   if (left < right) return -1;
   if (left > right) return 1;
@@ -47,8 +41,8 @@ function compareStrings(left: string, right: string) {
 }
 
 export function compareSyncPositions(left: SyncPosition, right: SyncPosition) {
-  const updatedAtComparison = left.updatedAt.getTime() - right.updatedAt.getTime();
-  if (updatedAtComparison !== 0) return updatedAtComparison;
+  if (left.syncVersion < right.syncVersion) return -1;
+  if (left.syncVersion > right.syncVersion) return 1;
 
   const kindComparison = entityKindOrder.get(left.kind)! - entityKindOrder.get(right.kind)!;
   if (kindComparison !== 0) return kindComparison;
@@ -57,19 +51,13 @@ export function compareSyncPositions(left: SyncPosition, right: SyncPosition) {
 
 export function isAfterCursor(position: SyncPosition, cursor: PullCursor | null) {
   if (!cursor) return true;
-  return compareSyncPositions(position, {
-    updatedAt: new Date(cursor.updatedAt),
-    kind: cursor.kind,
-    id: cursor.id,
-  }) > 0;
+  return position.syncVersion > BigInt(cursor.syncVersion);
 }
 
 export function encodeCursor(position: SyncPosition | PullCursor): string {
   const cursor: PullCursor = {
-    version: 1,
-    updatedAt: position.updatedAt instanceof Date ? position.updatedAt.toISOString() : position.updatedAt,
-    kind: position.kind,
-    id: position.id,
+    version: 2,
+    syncVersion: typeof position.syncVersion === "bigint" ? position.syncVersion.toString() : position.syncVersion,
   };
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
@@ -92,22 +80,15 @@ export function decodeCursor(value: string | null): PullCursor | null {
   }
 
   const cursor = decoded as Record<string, unknown>;
-  if (cursor.version !== 1 || typeof cursor.updatedAt !== "string" || !isSyncEntityKind(cursor.kind) || typeof cursor.id !== "string") {
+  if (cursor.version !== 2 || typeof cursor.syncVersion !== "string") {
     throw new PullValidationError("cursor must be a valid opaque cursor");
   }
 
-  const updatedAt = new Date(cursor.updatedAt);
-  if (Number.isNaN(updatedAt.getTime()) || updatedAt.toISOString() !== cursor.updatedAt) {
-    throw new PullValidationError("cursor must contain a canonical ISO timestamp");
+  if (cursor.syncVersion.length === 0 || cursor.syncVersion.length > 32 || !/^[1-9]\d*$/.test(cursor.syncVersion)) {
+    throw new PullValidationError("cursor must contain a valid sync version");
   }
-  if (cursor.id.length === 0 || cursor.id.length > 255) {
-    throw new PullValidationError("cursor must contain a valid entity ID");
-  }
-
   return {
-    version: 1,
-    updatedAt: cursor.updatedAt,
-    kind: cursor.kind,
-    id: cursor.id,
+    version: 2,
+    syncVersion: cursor.syncVersion,
   };
 }

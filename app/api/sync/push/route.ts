@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth, authEnabled } from "@/auth";
 import { defaultPaymentMethodName } from "@/lib/default-payment-methods";
@@ -29,6 +29,10 @@ class PushRejectedError extends Error {
 
 function date(value: string) {
   return new Date(value);
+}
+
+function nextSyncVersion() {
+  return sql`nextval('sync_change_version_seq')`;
 }
 
 function orderedOperations(operations: PushOperation[]) {
@@ -152,6 +156,7 @@ export async function POST(request: Request) {
               status: payload.status,
               updatedAt: date(payload.updatedAt),
               deletedAt: payload.deletedAt === null ? null : date(payload.deletedAt),
+              syncVersion: nextSyncVersion(),
             },
           });
       };
@@ -177,6 +182,7 @@ export async function POST(request: Request) {
               isActive: payload.isActive,
               updatedAt: date(payload.updatedAt),
               deletedAt: payload.deletedAt === null ? null : date(payload.deletedAt),
+              syncVersion: nextSyncVersion(),
             },
           });
       };
@@ -209,6 +215,7 @@ export async function POST(request: Request) {
               paidAt: date(payload.paidAt),
               updatedAt: date(payload.updatedAt),
               deletedAt: payload.deletedAt === null ? null : date(payload.deletedAt),
+              syncVersion: nextSyncVersion(),
             },
           });
       };
@@ -231,6 +238,7 @@ export async function POST(request: Request) {
               currentGroupId: payload.currentGroupId,
               updatedAt: date(payload.updatedAt),
               deletedAt: null,
+              syncVersion: nextSyncVersion(),
             },
           });
       };

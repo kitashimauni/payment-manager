@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   check,
   foreignKey,
@@ -19,6 +20,12 @@ const timestampColumns = {
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
 };
+
+function syncVersionColumn() {
+  return bigint("sync_version", { mode: "bigint" })
+    .notNull()
+    .default(sql`nextval('sync_change_version_seq')`);
+}
 
 export const groupStatus = pgEnum("group_status", ["active", "archived"]);
 
@@ -69,6 +76,7 @@ export const groups = pgTable(
     name: varchar("name", { length: 80 }).notNull(),
     status: groupStatus("status").notNull().default("active"),
     ...timestampColumns,
+    syncVersion: syncVersionColumn(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.id] }),
@@ -78,6 +86,7 @@ export const groups = pgTable(
       name: "groups_user_id_users_id_fk",
     }).onDelete("cascade"),
     index("groups_user_updated_at_idx").on(table.userId, table.updatedAt, table.id),
+    index("groups_user_sync_version_idx").on(table.userId, table.syncVersion),
     check("groups_name_not_blank", sql`length(btrim(${table.name})) > 0`),
   ],
 );
@@ -91,6 +100,7 @@ export const paymentMethods = pgTable(
     sortOrder: integer("sort_order").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
     ...timestampColumns,
+    syncVersion: syncVersionColumn(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.id] }),
@@ -100,6 +110,7 @@ export const paymentMethods = pgTable(
       name: "payment_methods_user_id_users_id_fk",
     }).onDelete("cascade"),
     index("payment_methods_user_updated_at_idx").on(table.userId, table.updatedAt, table.id),
+    index("payment_methods_user_sync_version_idx").on(table.userId, table.syncVersion),
     check("payment_methods_name_not_blank", sql`length(btrim(${table.name})) > 0`),
   ],
 );
@@ -115,6 +126,7 @@ export const payments = pgTable(
     groupId: text("group_id"),
     paidAt: timestamp("paid_at", { withTimezone: true, mode: "date" }).notNull(),
     ...timestampColumns,
+    syncVersion: syncVersionColumn(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.id] }),
@@ -135,6 +147,7 @@ export const payments = pgTable(
     }).onDelete("restrict"),
     index("payments_user_paid_at_idx").on(table.userId, table.paidAt, table.id),
     index("payments_user_updated_at_idx").on(table.userId, table.updatedAt, table.id),
+    index("payments_user_sync_version_idx").on(table.userId, table.syncVersion),
     index("payments_group_paid_at_idx").on(table.groupId, table.paidAt),
     check("payments_amount_positive", sql`${table.amount} > 0`),
   ],
@@ -146,6 +159,7 @@ export const userSettings = pgTable(
     userId: text("user_id").notNull(),
     currentGroupId: text("current_group_id"),
     ...timestampColumns,
+    syncVersion: syncVersionColumn(),
   },
   (table) => [
     primaryKey({ columns: [table.userId] }),
@@ -160,6 +174,7 @@ export const userSettings = pgTable(
       name: "user_settings_user_group_fk",
     }).onDelete("restrict"),
     index("user_settings_user_updated_at_idx").on(table.userId, table.updatedAt),
+    index("user_settings_user_sync_version_idx").on(table.userId, table.syncVersion),
   ],
 );
 

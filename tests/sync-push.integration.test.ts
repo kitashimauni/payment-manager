@@ -176,12 +176,37 @@ integrationDescribe("authenticated sync push", () => {
     expect(firstBody.nextCursor).toEqual(expect.any(String));
     expect(firstBody.hasMore).toBe(false);
 
+    const lateOperation = {
+      id: "operation-pull-late-payment",
+      type: "PAYMENT_UPSERT",
+      entityId: "pull-late-payment",
+      createdAt: "2026-09-05T23:59:00.000Z",
+      payload: {
+        ...paymentPayload("pull-late-payment", "pull-method"),
+        createdAt: "2026-09-05T23:59:00.000Z",
+        updatedAt: "2026-09-05T23:59:00.000Z",
+        paidAt: "2026-09-05T23:59:00.000Z",
+      },
+    };
+    expect((await post(request([lateOperation]))).status).toBe(200);
+
     const secondResponse = await pull(pullRequest(firstBody.nextCursor!));
-    const secondBody = (await secondResponse.json()) as { changes: unknown[]; nextCursor: string | null; hasMore: boolean };
+    const secondBody = (await secondResponse.json()) as {
+      changes: Array<{ type: string; entityId: string }>;
+      nextCursor: string | null;
+      hasMore: boolean;
+    };
     expect(secondResponse.status).toBe(200);
-    expect(secondBody.changes).toEqual([]);
-    expect(secondBody.nextCursor).toBe(firstBody.nextCursor);
+    expect(secondBody.changes).toEqual([{ type: "PAYMENT_UPSERT", entityId: "pull-late-payment", payload: expect.any(Object) }]);
+    expect(secondBody.nextCursor).not.toBe(firstBody.nextCursor);
     expect(secondBody.hasMore).toBe(false);
+
+    const thirdResponse = await pull(pullRequest(secondBody.nextCursor!));
+    const thirdBody = (await thirdResponse.json()) as { changes: unknown[]; nextCursor: string | null; hasMore: boolean };
+    expect(thirdResponse.status).toBe(200);
+    expect(thirdBody.changes).toEqual([]);
+    expect(thirdBody.nextCursor).toBe(secondBody.nextCursor);
+    expect(thirdBody.hasMore).toBe(false);
   });
 
   it("rejects an invalid cursor before querying changes", async () => {

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth, authEnabled } from "@/auth";
 import { db } from "@/server/db/client";
@@ -7,7 +7,6 @@ import {
   compareSyncPositions,
   decodeCursor,
   encodeCursor,
-  isAfterCursor,
   type PullChange,
   type PullCursor,
   type SyncPosition,
@@ -31,7 +30,7 @@ function groupRecord(row: typeof groups.$inferSelect): PullRecord {
   return {
     kind: "groups",
     id: row.id,
-    updatedAt: row.updatedAt,
+    syncVersion: row.syncVersion,
     change: {
       type: row.deletedAt ? "GROUP_DELETE" : "GROUP_UPSERT",
       entityId: row.id,
@@ -44,7 +43,7 @@ function paymentMethodRecord(row: typeof paymentMethods.$inferSelect): PullRecor
   return {
     kind: "paymentMethods",
     id: row.id,
-    updatedAt: row.updatedAt,
+    syncVersion: row.syncVersion,
     change: {
       type: "PAYMENT_METHOD_UPSERT",
       entityId: row.id,
@@ -65,7 +64,7 @@ function paymentRecord(row: typeof payments.$inferSelect): PullRecord {
   return {
     kind: "payments",
     id: row.id,
-    updatedAt: row.updatedAt,
+    syncVersion: row.syncVersion,
     change: {
       type: row.deletedAt ? "PAYMENT_DELETE" : "PAYMENT_UPSERT",
       entityId: row.id,
@@ -88,7 +87,7 @@ function settingsRecord(row: typeof userSettings.$inferSelect): PullRecord {
   return {
     kind: "settings",
     id: "local",
-    updatedAt: row.updatedAt,
+    syncVersion: row.syncVersion,
     change: {
       type: "SETTINGS_UPSERT",
       entityId: "local",
@@ -137,10 +136,32 @@ export async function GET(request: Request) {
       const [user] = await transaction.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
       if (!user) return null;
 
-      const groupRows = await transaction.select().from(groups).where(eq(groups.userId, userId));
-      const paymentMethodRows = await transaction.select().from(paymentMethods).where(eq(paymentMethods.userId, userId));
-      const paymentRows = await transaction.select().from(payments).where(eq(payments.userId, userId));
-      const settingsRows = await transaction.select().from(userSettings).where(eq(userSettings.userId, userId));
+      const syncVersion = cursor ? BigInt(cursor.syncVersion) : null;
+      const limit = PAGE_SIZE + 1;
+      const groupRows = await transaction
+        .select()
+        .from(groups)
+        .where(syncVersion === null ? eq(groups.userId, userId) : and(eq(groups.userId, userId), gt(groups.syncVersion, syncVersion)))
+        .orderBy(asc(groups.syncVersion))
+        .limit(limit);
+      const paymentMethodRows = await transaction
+        .select()
+        .from(paymentMethods)
+        .where(syncVersion === null ? eq(paymentMethods.userId, userId) : and(eq(paymentMethods.userId, userId), gt(paymentMethods.syncVersion, syncVersion)))
+        .orderBy(asc(paymentMethods.syncVersion))
+        .limit(limit);
+      const paymentRows = await transaction
+        .select()
+        .from(payments)
+        .where(syncVersion === null ? eq(payments.userId, userId) : and(eq(payments.userId, userId), gt(payments.syncVersion, syncVersion)))
+        .orderBy(asc(payments.syncVersion))
+        .limit(limit);
+      const settingsRows = await transaction
+        .select()
+        .from(userSettings)
+        .where(syncVersion === null ? eq(userSettings.userId, userId) : and(eq(userSettings.userId, userId), gt(userSettings.syncVersion, syncVersion)))
+        .orderBy(asc(userSettings.syncVersion))
+        .limit(limit);
 
       return [
         ...groupRows.map(groupRecord),
@@ -152,7 +173,7 @@ export async function GET(request: Request) {
 
     if (!records) return pullError("authenticated user does not exist", 401);
 
-    const sortedRecords = records.filter((record) => isAfterCursor(record, cursor)).sort(compareSyncPositions);
+    const sortedRecords = records.sort(compareSyncPositions);
     const page = sortedRecords.slice(0, PAGE_SIZE);
     const lastRecord = page.at(-1);
     const nextCursor = lastRecord ? encodeCursor(lastRecord) : cursor ? encodeCursor(cursor) : null;
