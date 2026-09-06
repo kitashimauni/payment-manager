@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const testDatabaseUrl = process.env.SYNC_TEST_DATABASE_URL;
@@ -213,6 +214,67 @@ integrationDescribe("authenticated sync push", () => {
     const response = await pull(pullRequest("invalid-cursor"));
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: "sync-pull-failed" });
+  });
+
+  it("serializes same-user pushes before assigning sync versions", async () => {
+    const lockSql = postgres(testDatabaseUrl!, { max: 1 });
+    let releaseLock!: () => void;
+    let signalLockReady!: () => void;
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const lockReady = new Promise<void>((resolve) => {
+      signalLockReady = resolve;
+    });
+
+    const lockTransaction = lockSql.begin(async (transactionSql) => {
+      await transactionSql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`;
+      signalLockReady();
+      await lockReleased;
+    });
+
+    try {
+      await lockReady;
+      const operations = [
+        {
+          id: "operation-concurrent-group-a",
+          type: "GROUP_UPSERT",
+          entityId: "concurrent-group-a",
+          createdAt: timestamp,
+          payload: { id: "concurrent-group-a", name: "同時A", status: "active", createdAt: timestamp, updatedAt: timestamp, deletedAt: null },
+        },
+        {
+          id: "operation-concurrent-group-b",
+          type: "GROUP_UPSERT",
+          entityId: "concurrent-group-b",
+          createdAt: timestamp,
+          payload: { id: "concurrent-group-b", name: "同時B", status: "active", createdAt: timestamp, updatedAt: timestamp, deletedAt: null },
+        },
+      ];
+      const pushes = operations.map((operation) => post(request([operation])));
+      const resultBeforeRelease = await Promise.race([
+        Promise.all(pushes).then(() => "completed" as const),
+        new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 100)),
+      ]);
+      expect(resultBeforeRelease).toBe("blocked");
+
+      releaseLock();
+      const responses = await Promise.all(pushes);
+      expect(responses.map((response) => response.status)).toEqual([200, 200]);
+      await lockTransaction;
+
+      const response = await pull(pullRequest());
+      const body = (await response.json()) as { changes: Array<{ entityId: string }> };
+      expect(response.status).toBe(200);
+      expect(body.changes).toEqual([
+        expect.objectContaining({ entityId: "concurrent-group-a" }),
+        expect.objectContaining({ entityId: "concurrent-group-b" }),
+      ]);
+    } finally {
+      releaseLock();
+      await lockTransaction.catch(() => undefined);
+      await lockSql.end({ timeout: 1 });
+    }
   });
 
   it("creates a missing Local First default method for a payment", async () => {

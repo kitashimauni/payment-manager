@@ -84,6 +84,8 @@ export async function POST(request: Request) {
 
   try {
     await database.transaction(async (transaction) => {
+      await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${userId}, 0))`);
+
       const [user] = await transaction
         .select({ id: users.id })
         .from(users)

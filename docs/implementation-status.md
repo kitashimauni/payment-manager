@@ -31,7 +31,7 @@
 - セッションはJWT方式とし、Issue #1ではOAuthアカウントリンク用の`accounts`だけを追加する。Push/Pull、所有権チェック、Outboxの初回移行は認証済み同期の別段階で実装する。
 - 初回ログインでは既存のIndexedDBデータを削除・統合せず、確認ボタンを押すまでPushもしない。確認後は既存Outboxを認証済みPushの送信対象とし、失敗時は端末に保持する。サーバーデータとの明示的な統合操作は後続段階で追加する。
 - Pushはリレーションの順序を保つためGroup、Payment Method、Payment、Settingsの順に処理し、既存のLocal First初期Payment Methodはサーバー側で必要時に作成する。
-- Push段階では受信順のupsertを行い、古い更新の勝敗を決める処理は追加しない。同期対象にはサーバー採番の`sync_version`を付与し、Pullはそれをopaque cursorとして安定した順序を作る。クライアント由来の`updatedAt`はLWW判定用に残し、cursorの進行には使わない。論理削除も変更として返し、Last Write Winsはクライアント適用・競合処理の段階で実装する。
+- Push段階では受信順のupsertを行い、古い更新の勝敗を決める処理は追加しない。同期対象にはサーバー採番の`sync_version`を付与し、同一ユーザーのPush transactionではtransaction advisory lockを取得して採番順とcommit順を一致させる。Pullはrepeatable readのsnapshotから`sync_version`をopaque cursorとして安定した順序を作る。クライアント由来の`updatedAt`はLWW判定用に残し、cursorの進行には使わない。論理削除も変更として返し、Last Write Winsはクライアント適用・競合処理の段階で実装する。
 - Entityの更新と対応するOutbox追加は同じIndexedDB readwrite transactionで実行し、Group削除時の関連更新も一括でコミットする。
 - サーバー側のIDはクライアント生成値をそのまま保持し、ユーザーごとの複合主キーで初期決済手段IDの衝突を防ぐ。
 - Paymentの支払い方法・Group参照はユーザーIDを含む複合外部キーにし、ユーザーをまたぐ参照をDBでも拒否する。

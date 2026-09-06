@@ -169,7 +169,7 @@ export async function GET(request: Request) {
         ...paymentRows.map(paymentRecord),
         ...settingsRows.map(settingsRecord),
       ];
-    });
+    }, { isolationLevel: "repeatable read", accessMode: "read only" });
 
     if (!records) return pullError("authenticated user does not exist", 401);
 
