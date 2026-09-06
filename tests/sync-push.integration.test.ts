@@ -13,6 +13,7 @@ integrationDescribe("authenticated sync push", () => {
   const foreignUserId = "sync-push-integration-foreign-user";
   const timestamp = "2026-09-06T00:00:00.000Z";
   let post: typeof import("../app/api/sync/push/route").POST;
+  let pull: typeof import("../app/api/sync/pull/route").GET;
   let database: NonNullable<(typeof import("../src/server/db/client"))["db"]>;
   let sqlClient: NonNullable<(typeof import("../src/server/db/client"))["sql"]>;
   let tables: typeof import("../src/server/db/schema");
@@ -23,6 +24,9 @@ integrationDescribe("authenticated sync push", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ operations }),
     });
+
+  const pullRequest = (cursor?: string) =>
+    new Request(`http://localhost/api/sync/pull${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
 
   const paymentPayload = (id: string, paymentMethodId: string, groupId: string | null = null) => ({
     id,
@@ -41,9 +45,11 @@ integrationDescribe("authenticated sync push", () => {
     if (!testDatabaseUrl) throw new Error("SYNC_TEST_DATABASE_URL is required");
     process.env.DATABASE_URL = testDatabaseUrl;
     const route = await import("../app/api/sync/push/route");
+    const pullRoute = await import("../app/api/sync/pull/route");
     const client = await import("../src/server/db/client");
     tables = await import("../src/server/db/schema");
     post = route.POST;
+    pull = pullRoute.GET;
     database = client.db!;
     sqlClient = client.sql!;
   });
@@ -112,6 +118,76 @@ integrationDescribe("authenticated sync push", () => {
 
     expect(payment).toMatchObject({ userId, id: "payment-1", paymentMethodId: "method-1", groupId: "group-1" });
     expect(settings).toMatchObject({ userId, currentGroupId: "group-1" });
+  });
+
+  it("returns owned changes in a stable order and resumes after its cursor", async () => {
+    const operations = [
+      {
+        id: "operation-pull-group",
+        type: "GROUP_UPSERT",
+        entityId: "pull-group",
+        createdAt: timestamp,
+        payload: { id: "pull-group", name: "Pull", status: "active", createdAt: timestamp, updatedAt: timestamp, deletedAt: null },
+      },
+      {
+        id: "operation-pull-method",
+        type: "PAYMENT_METHOD_UPSERT",
+        entityId: "pull-method",
+        createdAt: timestamp,
+        payload: { id: "pull-method", name: "Pullカード", sortOrder: 0, isActive: true, createdAt: timestamp, updatedAt: timestamp, deletedAt: null },
+      },
+      {
+        id: "operation-pull-payment",
+        type: "PAYMENT_UPSERT",
+        entityId: "pull-payment",
+        createdAt: timestamp,
+        payload: paymentPayload("pull-payment", "pull-method", "pull-group"),
+      },
+      {
+        id: "operation-pull-settings",
+        type: "SETTINGS_UPSERT",
+        entityId: "local",
+        createdAt: timestamp,
+        payload: { id: "local", currentGroupId: "pull-group", createdAt: timestamp, updatedAt: timestamp },
+      },
+    ];
+
+    expect((await post(request(operations))).status).toBe(200);
+
+    const firstResponse = await pull(pullRequest());
+    const firstBody = (await firstResponse.json()) as {
+      changes: Array<{ type: string; entityId: string }>;
+      nextCursor: string | null;
+      hasMore: boolean;
+    };
+    expect(firstResponse.status).toBe(200);
+    expect(firstBody.changes.map((change) => change.type)).toEqual([
+      "GROUP_UPSERT",
+      "PAYMENT_METHOD_UPSERT",
+      "PAYMENT_UPSERT",
+      "SETTINGS_UPSERT",
+    ]);
+    expect(firstBody.changes.map((change) => change.entityId)).toEqual([
+      "pull-group",
+      "pull-method",
+      "pull-payment",
+      "local",
+    ]);
+    expect(firstBody.nextCursor).toEqual(expect.any(String));
+    expect(firstBody.hasMore).toBe(false);
+
+    const secondResponse = await pull(pullRequest(firstBody.nextCursor!));
+    const secondBody = (await secondResponse.json()) as { changes: unknown[]; nextCursor: string | null; hasMore: boolean };
+    expect(secondResponse.status).toBe(200);
+    expect(secondBody.changes).toEqual([]);
+    expect(secondBody.nextCursor).toBe(firstBody.nextCursor);
+    expect(secondBody.hasMore).toBe(false);
+  });
+
+  it("rejects an invalid cursor before querying changes", async () => {
+    const response = await pull(pullRequest("invalid-cursor"));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "sync-pull-failed" });
   });
 
   it("creates a missing Local First default method for a payment", async () => {

@@ -45,7 +45,9 @@ mise exec -- node -e "console.log(require('node:crypto').randomBytes(32).toStrin
 
 ## 同期について
 
-`/api/sync/push` は、端末とアカウントの紐付けを確認した認証済みユーザーのOutboxをPostgreSQLへ一方向同期します。未ログイン、確認前、認証設定未完了、またはサーバー未設定の場合はエラーまたは送信停止となり、クライアントはOutboxを保持します。Pushでは `users` / `groups` / `payment_methods` / `payments` / `user_settings` をサーバー側の`user_id`でupsertし、Pullとcursor、Last Write Winsは後続段階で実装します。
+`/api/sync/push` は、端末とアカウントの紐付けを確認した認証済みユーザーのOutboxをPostgreSQLへ一方向同期します。未ログイン、確認前、認証設定未完了、またはサーバー未設定の場合はエラーまたは送信停止となり、クライアントはOutboxを保持します。Pushでは `users` / `groups` / `payment_methods` / `payments` / `user_settings` をサーバー側の`user_id`でupsertします。
+
+`/api/sync/pull?cursor=...` は、同じ認証済みユーザーの変更を `updatedAt`・エンティティ種別・IDの安定した順序で返します。cursorはopaqueなページング値で、論理削除も変更として含まれます。Pull結果のIndexedDB適用とLast Write Winsは後続段階で実装します。
 
 詳細な実装判断と未実装項目は [docs/implementation-status.md](docs/implementation-status.md) を参照してください。
 
