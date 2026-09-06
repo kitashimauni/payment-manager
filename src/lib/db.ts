@@ -7,6 +7,7 @@ import type {
   SyncState,
   UserSettings,
 } from "./types";
+import { defaultPaymentMethods } from "./default-payment-methods";
 
 const DB_NAME = "payment-manager-local";
 const DB_VERSION = 1;
@@ -22,6 +23,7 @@ const STORE_NAMES = [
 type StoreName = (typeof STORE_NAMES)[number];
 
 export const OUTBOX_CHANGED_EVENT = "payment-manager:outbox-changed";
+export const SYNC_STATE_CHANGED_EVENT = "payment-manager:sync-state-changed";
 
 export function subscribeToOutboxChanges(onChange: () => void) {
   if (typeof window === "undefined") return () => undefined;
@@ -31,13 +33,25 @@ export function subscribeToOutboxChanges(onChange: () => void) {
   return () => window.removeEventListener(OUTBOX_CHANGED_EVENT, handleChange);
 }
 
+export function subscribeToSyncStateChanges(onChange: () => void) {
+  if (typeof window === "undefined") return () => undefined;
+
+  const handleChange = () => onChange();
+  window.addEventListener(SYNC_STATE_CHANGED_EVENT, handleChange);
+  return () => window.removeEventListener(SYNC_STATE_CHANGED_EVENT, handleChange);
+}
+
 function notifyOutboxChanged() {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
   }
 }
 
-const defaultPaymentMethods = ["現金", "Suica", "PayPay", "Visa", "Mastercard", "QUICPay"];
+function notifySyncStateChanged() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SYNC_STATE_CHANGED_EVENT));
+  }
+}
 
 function uuid() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -211,7 +225,15 @@ export async function seedDefaultData() {
   }
   const [settings, syncState] = await Promise.all([get<UserSettings>("settings", "local"), get<SyncState>("syncState", "default")]);
   if (!settings) await put<UserSettings>("settings", { id: "local", currentGroupId: null, createdAt: timestamp, updatedAt: timestamp });
-  if (!syncState) await put<SyncState>("syncState", { id: "default", cursor: null, lastSyncedAt: null });
+  if (!syncState) {
+    await put<SyncState>("syncState", {
+      id: "default",
+      cursor: null,
+      lastSyncedAt: null,
+      migrationConfirmed: false,
+      syncOwnerUserId: null,
+    });
+  }
 }
 
 export async function listPayments() {
@@ -358,18 +380,41 @@ export function listOutbox() {
 }
 
 export async function getSyncState() {
-  return (await get<SyncState>("syncState", "default")) ?? {
+  const stored = await get<SyncState>("syncState", "default");
+  return {
     id: "default" as const,
-    cursor: null,
-    lastSyncedAt: null,
+    cursor: stored?.cursor ?? null,
+    lastSyncedAt: stored?.lastSyncedAt ?? null,
+    migrationConfirmed: stored?.migrationConfirmed ?? false,
+    syncOwnerUserId: stored?.syncOwnerUserId ?? null,
   };
 }
 
-export async function trySync() {
+export async function confirmSyncMigration(userId: string) {
+  if (!userId) throw new Error("同期ユーザーIDがありません。");
+
+  const current = await getSyncState();
+  if (current.syncOwnerUserId !== null && current.syncOwnerUserId !== userId) {
+    throw new Error("この端末は別のアカウントに紐付いています。");
+  }
+
+  const next = {
+    ...current,
+    migrationConfirmed: true,
+    syncOwnerUserId: userId,
+  } satisfies SyncState;
+  await put<SyncState>("syncState", next);
+  notifySyncStateChanged();
+  return next;
+}
+
+export async function trySync(syncUserId?: string | null) {
   if (typeof window === "undefined" || !navigator.onLine) return "offline" as const;
+  if (!syncUserId) return "pending" as const;
 
   const outbox = await listOutbox();
   const syncState = await getSyncState();
+  if (!syncState.migrationConfirmed || syncState.syncOwnerUserId !== syncUserId) return "pending" as const;
   try {
     const response = await fetch("/api/sync/push", {
       method: "POST",
@@ -388,7 +433,14 @@ export async function trySync() {
       notifyOutboxChanged();
     }
     if (result.nextCursor !== undefined) {
-      await put<SyncState>("syncState", { id: "default", cursor: result.nextCursor ?? null, lastSyncedAt: now() });
+      await put<SyncState>("syncState", {
+        id: "default",
+        cursor: result.nextCursor ?? null,
+        lastSyncedAt: now(),
+        migrationConfirmed: syncState.migrationConfirmed,
+        syncOwnerUserId: syncState.syncOwnerUserId,
+      });
+      notifySyncStateChanged();
     }
     return accepted.size === outbox.length ? ("synced" as const) : ("pending" as const);
   } catch {

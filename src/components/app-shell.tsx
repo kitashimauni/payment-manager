@@ -1,10 +1,12 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
-import { listOutbox, subscribeToOutboxChanges, trySync } from "@/lib/db";
+import { listOutbox, subscribeToOutboxChanges, subscribeToSyncStateChanges, trySync } from "@/lib/db";
 import { OfflineAwareLink } from "./offline-aware-link";
 import { PwaRegistration } from "./pwa-registration";
+import { SyncMigrationPrompt } from "./sync-migration-prompt";
 
 const navigation = [
   { href: "/", label: "記録", icon: "＋" },
@@ -13,7 +15,7 @@ const navigation = [
   { href: "/settings", label: "設定", icon: "⚙" },
 ];
 
-function NetworkStatus() {
+function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
   const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
   const [pending, setPending] = useState(0);
 
@@ -34,7 +36,7 @@ function NetworkStatus() {
       update();
       await refreshPending();
       try {
-        await trySync();
+        await trySync(syncUserId);
       } catch {
         // Keep the locally calculated count when sync cannot be attempted.
       }
@@ -43,6 +45,7 @@ function NetworkStatus() {
     const handleOnline = () => void refresh();
     const handleOffline = () => update();
     const unsubscribeFromOutbox = subscribeToOutboxChanges(() => void refreshPending());
+    const unsubscribeFromSyncState = subscribeToSyncStateChanges(() => void refresh());
 
     void refresh();
     window.addEventListener("online", handleOnline);
@@ -50,10 +53,11 @@ function NetworkStatus() {
     return () => {
       active = false;
       unsubscribeFromOutbox();
+      unsubscribeFromSyncState();
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, []);
+  }, [syncUserId]);
 
   return (
     <div className={`network-status ${online ? "is-online" : "is-offline"}`}>
@@ -65,6 +69,8 @@ function NetworkStatus() {
 
 export function AppShell({ children, authStatus }: { children: React.ReactNode; authStatus: React.ReactNode }) {
   const pathname = usePathname();
+  const { data: session, status: sessionStatus } = useSession();
+  const syncUserId = sessionStatus === "authenticated" ? session.user?.id ?? null : null;
 
   return (
     <>
@@ -81,10 +87,11 @@ export function AppShell({ children, authStatus }: { children: React.ReactNode; 
             </OfflineAwareLink>
             <div className="topbar-actions">
               {authStatus}
-              <NetworkStatus />
+              <NetworkStatus syncUserId={syncUserId} />
             </div>
           </div>
         </header>
+        <SyncMigrationPrompt />
         <main className="page-container">{children}</main>
         <nav className="bottom-nav" aria-label="メインナビゲーション">
           {navigation.map((item) => {
