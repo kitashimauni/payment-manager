@@ -153,6 +153,7 @@ export async function POST(request: Request) {
           })
           .onConflictDoUpdate({
             target: [groups.userId, groups.id],
+            where: sql`${groups.updatedAt} <= excluded.updated_at`,
             set: {
               name: payload.name,
               status: payload.status,
@@ -178,6 +179,7 @@ export async function POST(request: Request) {
           })
           .onConflictDoUpdate({
             target: [paymentMethods.userId, paymentMethods.id],
+            where: sql`${paymentMethods.updatedAt} <= excluded.updated_at`,
             set: {
               name: payload.name,
               sortOrder: payload.sortOrder,
@@ -209,6 +211,7 @@ export async function POST(request: Request) {
           })
           .onConflictDoUpdate({
             target: [payments.userId, payments.id],
+            where: sql`${payments.updatedAt} <= excluded.updated_at`,
             set: {
               amount: payload.amount,
               paymentMethodId: payload.paymentMethodId,
@@ -236,6 +239,7 @@ export async function POST(request: Request) {
           })
           .onConflictDoUpdate({
             target: userSettings.userId,
+            where: sql`${userSettings.updatedAt} <= excluded.updated_at`,
             set: {
               currentGroupId: payload.currentGroupId,
               updatedAt: date(payload.updatedAt),

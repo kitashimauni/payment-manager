@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { getGroup, getSettings, listPaymentMethods, listPayments, now, removeGroup, saveGroup, saveSettings, seedDefaultData } from "@/lib/db";
+import { getGroup, getSettings, listPaymentMethods, listPayments, now, removeGroup, saveGroup, saveSettings, seedDefaultData, subscribeToLocalDataChanges } from "@/lib/db";
 import { formatYen } from "@/lib/format";
 import type { Group, Payment, PaymentMethod, UserSettings } from "@/lib/types";
 import { PaymentList } from "@/components/payment-list";
@@ -35,6 +35,7 @@ export default function GroupDetailPage() {
   useEffect(() => {
     void warmOfflineRoutes([`/groups/${params.id}`]);
     void refresh();
+    return subscribeToLocalDataChanges(() => void refresh());
   }, [params.id]);
 
   const total = useMemo(() => payments.reduce((sum, payment) => sum + payment.amount, 0), [payments]);

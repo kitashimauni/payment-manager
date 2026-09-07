@@ -3,7 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { formatDateTimeInput } from "@/lib/format";
-import { getPayment, listGroups, listPaymentMethods, now, removePayment, savePayment, seedDefaultData } from "@/lib/db";
+import { getPayment, listGroups, listPaymentMethods, now, removePayment, savePayment, seedDefaultData, subscribeToLocalDataChanges } from "@/lib/db";
 import type { Group, Payment, PaymentMethod } from "@/lib/types";
 import { Toast } from "@/components/toast";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
@@ -23,23 +23,28 @@ export default function PaymentDetailPage() {
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
 
+  async function refresh() {
+    await seedDefaultData();
+    const [nextPayment, nextMethods, nextGroups] = await Promise.all([getPayment(params.id), listPaymentMethods(true), listGroups()]);
+    if (nextPayment && !nextPayment.deletedAt) {
+      setPayment(nextPayment);
+      setAmount(String(nextPayment.amount));
+      setTitle(nextPayment.title ?? "");
+      setMethodId(nextPayment.paymentMethodId);
+      setGroupId(nextPayment.groupId ?? "");
+      setPaidAt(formatDateTimeInput(nextPayment.paidAt));
+    } else {
+      setPayment(null);
+    }
+    setMethods(nextMethods);
+    setGroups(nextGroups);
+    setLoading(false);
+  }
+
   useEffect(() => {
     void warmOfflineRoutes([`/payments/${params.id}`]);
-    void (async () => {
-      await seedDefaultData();
-      const [nextPayment, nextMethods, nextGroups] = await Promise.all([getPayment(params.id), listPaymentMethods(true), listGroups()]);
-      if (nextPayment && !nextPayment.deletedAt) {
-        setPayment(nextPayment);
-        setAmount(String(nextPayment.amount));
-        setTitle(nextPayment.title ?? "");
-        setMethodId(nextPayment.paymentMethodId);
-        setGroupId(nextPayment.groupId ?? "");
-        setPaidAt(formatDateTimeInput(nextPayment.paidAt));
-      }
-      setMethods(nextMethods);
-      setGroups(nextGroups);
-      setLoading(false);
-    })();
+    void refresh();
+    return subscribeToLocalDataChanges(() => void refresh());
   }, [params.id]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {

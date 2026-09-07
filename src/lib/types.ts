@@ -54,6 +54,18 @@ export type OutboxEntry = {
   createdAt: string;
 };
 
+export type SyncChange =
+  | { type: "GROUP_UPSERT" | "GROUP_DELETE"; entityId: string; payload: Group }
+  | { type: "PAYMENT_METHOD_UPSERT"; entityId: string; payload: PaymentMethod }
+  | { type: "PAYMENT_UPSERT" | "PAYMENT_DELETE"; entityId: string; payload: Payment }
+  | { type: "SETTINGS_UPSERT"; entityId: "local"; payload: UserSettings };
+
+export type SyncPullResponse = {
+  changes: SyncChange[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
 export type SyncState = {
   id: "default";
   cursor: string | null;

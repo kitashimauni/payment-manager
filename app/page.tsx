@@ -11,6 +11,7 @@ import {
   savePayment,
   saveSettings,
   seedDefaultData,
+  subscribeToLocalDataChanges,
   trySync,
   uuid,
 } from "@/lib/db";
@@ -68,6 +69,7 @@ export default function HomePage() {
 
   useEffect(() => {
     void refresh();
+    return subscribeToLocalDataChanges(() => void refresh());
   }, []);
 
   useEffect(() => {

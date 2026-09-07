@@ -6,6 +6,7 @@ import {
   isAfterCursor,
   type SyncPosition,
 } from "@/server/sync/pull";
+import { parseSyncPullResponse } from "@/lib/sync";
 
 const position = (kind: SyncPosition["kind"], id: string, syncVersion = BigInt(1)): SyncPosition => ({
   kind,
@@ -42,5 +43,30 @@ describe("sync pull cursor", () => {
     expect(() => decodeCursor(invalidVersion)).toThrow("valid opaque cursor");
     const invalidSyncVersion = Buffer.from(JSON.stringify({ version: 2, syncVersion: "0" }), "utf8").toString("base64url");
     expect(() => decodeCursor(invalidSyncVersion)).toThrow("valid sync version");
+  });
+
+  it("validates pull changes before they reach IndexedDB", () => {
+    const response = parseSyncPullResponse({
+      changes: [{
+        type: "PAYMENT_DELETE",
+        entityId: "payment-1",
+        payload: {
+          id: "payment-1",
+          amount: 100,
+          paymentMethodId: "method-1",
+          title: null,
+          groupId: null,
+          paidAt: "2026-09-07T00:00:00.000Z",
+          createdAt: "2026-09-07T00:00:00.000Z",
+          updatedAt: "2026-09-07T00:01:00.000Z",
+          deletedAt: "2026-09-07T00:01:00.000Z",
+        },
+      }],
+      nextCursor: "opaque-cursor",
+      hasMore: false,
+    });
+
+    expect(response.changes[0].type).toBe("PAYMENT_DELETE");
+    expect(() => parseSyncPullResponse({ changes: [], nextCursor: null, hasMore: "false" })).toThrow("hasMore");
   });
 });

@@ -121,6 +121,43 @@ integrationDescribe("authenticated sync push", () => {
     expect(settings).toMatchObject({ userId, currentGroupId: "group-1" });
   });
 
+  it("keeps the newer server state when an older update arrives", async () => {
+    const newer = {
+      id: "operation-lww-newer",
+      type: "GROUP_UPSERT",
+      entityId: "lww-group",
+      createdAt: timestamp,
+      payload: {
+        id: "lww-group",
+        name: "新しい更新",
+        status: "active",
+        createdAt: timestamp,
+        updatedAt: "2026-09-07T00:02:00.000Z",
+        deletedAt: null,
+      },
+    };
+    const older = {
+      id: "operation-lww-older",
+      type: "GROUP_UPSERT",
+      entityId: "lww-group",
+      createdAt: timestamp,
+      payload: {
+        ...newer.payload,
+        name: "古い更新",
+        updatedAt: "2026-09-07T00:01:00.000Z",
+      },
+    };
+
+    expect((await post(request([newer]))).status).toBe(200);
+    expect((await post(request([older]))).status).toBe(200);
+
+    const [stored] = await database
+      .select()
+      .from(tables.groups)
+      .where(and(eq(tables.groups.userId, userId), eq(tables.groups.id, "lww-group")));
+    expect(stored).toMatchObject({ name: "新しい更新", updatedAt: new Date("2026-09-07T00:02:00.000Z") });
+  });
+
   it("returns owned changes in a stable order and resumes after its cursor", async () => {
     const operations = [
       {
