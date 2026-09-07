@@ -13,7 +13,7 @@
 | Payment Method | 実装済み | 追加、名称変更、並び替え、アーカイブ、再表示 |
 | Local First | 実装済み | IndexedDBの `payments` / `groups` / `paymentMethods` / `settings` / `outbox` / `syncState` |
 | オフライン利用 | 実装済み | Service Worker、通信状態表示、ローカル登録 |
-| Sync API | Push実装済み | 端末・アカウント確認済みの`POST /api/sync/push`でOutboxをPostgreSQLへupsert。未認証・確認前・未設定時はOutboxを保持し、Pullは契約のみ |
+| Sync API | Push/Pull実装済み | 端末・アカウント確認済みの`POST /api/sync/push`でOutboxをPostgreSQLへupsertし、`GET /api/sync/pull?cursor=...`でユーザー所有の変更をサーバー採番の`sync_version`順で返す。未認証・確認前・未設定時はOutboxを保持し、Pull結果のIndexedDB適用は後続段階 |
 | 認証 | Issue #1の基盤を実装済み | Auth.js + Google OAuth、Auth.js生成のUUIDユーザーID、未設定時のLocal Only表示、OAuth `accounts`テーブル |
 | PostgreSQL/Drizzle | 実装済み | `src/server/db/schema.ts` と `drizzle/` にAuth.jsのユーザー/アカウント、および所有ユーザー、グループ、支払い方法、支払い、ユーザー設定の定義を追加 |
 | 自動テスト/CI | 実装済み | IndexedDBの主要フローをVitestで検証し、GitHub Actionsでmise経由のinstall / typecheck / test / buildを実行 |
@@ -31,7 +31,7 @@
 - セッションはJWT方式とし、Issue #1ではOAuthアカウントリンク用の`accounts`だけを追加する。Push/Pull、所有権チェック、Outboxの初回移行は認証済み同期の別段階で実装する。
 - 初回ログインでは既存のIndexedDBデータを削除・統合せず、確認ボタンを押すまでPushもしない。確認後は既存Outboxを認証済みPushの送信対象とし、失敗時は端末に保持する。サーバーデータとの明示的な統合操作は後続段階で追加する。
 - Pushはリレーションの順序を保つためGroup、Payment Method、Payment、Settingsの順に処理し、既存のLocal First初期Payment Methodはサーバー側で必要時に作成する。
-- Push段階では受信順のupsertを行い、古い更新の勝敗を決める処理は追加しない。cursorとLast Write WinsはPull・競合処理の段階で実装する。
+- Push段階では受信順のupsertを行い、古い更新の勝敗を決める処理は追加しない。同期対象にはサーバー採番の`sync_version`を付与し、同一ユーザーのPush transactionではtransaction advisory lockを取得して採番順とcommit順を一致させる。Pullはrepeatable readのsnapshotから`sync_version`をopaque cursorとして安定した順序を作る。クライアント由来の`updatedAt`はLWW判定用に残し、cursorの進行には使わない。論理削除も変更として返し、Last Write Winsはクライアント適用・競合処理の段階で実装する。
 - Entityの更新と対応するOutbox追加は同じIndexedDB readwrite transactionで実行し、Group削除時の関連更新も一括でコミットする。
 - サーバー側のIDはクライアント生成値をそのまま保持し、ユーザーごとの複合主キーで初期決済手段IDの衝突を防ぐ。
 - Paymentの支払い方法・Group参照はユーザーIDを含む複合外部キーにし、ユーザーをまたぐ参照をDBでも拒否する。
@@ -40,6 +40,6 @@
 
 ## 残りの実装単位
 
-1. PullのcursorとLast Write Winsを実装する。
-2. サーバー変更をIndexedDBへ適用するPull処理と競合検知を追加する。
+1. Pullしたサーバー変更をIndexedDBへ適用する経路と、Outboxを生成しないremote applyを追加する。
+2. Last Write Wins、delete/update競合、2デバイス統合テストを実装する。
 3. CSV/JSON Export、集計、検索をPhase 2として追加する。

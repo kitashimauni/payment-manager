@@ -15,6 +15,13 @@
       "when": 1788580283908,
       "tag": "0001_clumsy_gorilla_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788707235326,
+      "tag": "0002_unique_albert_cleary",
+      "breakpoints": true
     }
   ]
 }
