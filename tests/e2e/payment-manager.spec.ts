@@ -163,6 +163,9 @@ test("flushes an offline payment after authenticated online recovery", async ({ 
   await expect(page.getByText("1件の変更が同期待ち", { exact: true })).toBeVisible();
 
   await context.setOffline(false);
+  // Playwright restores transport here but does not consistently dispatch the
+  // browser event that the application uses to start recovery.
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await expect.poll(() => outboxCount(page), { timeout: 30_000 }).toBe(0);
   await page.reload();
   await expect(page.getByText("同期待ちの変更はありません", { exact: true })).toBeVisible({ timeout: 30_000 });
