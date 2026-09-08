@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getSyncState, listOutbox, seedDefaultData, trySync } from "@/lib/db";
+import { getSyncState, listOutbox, seedDefaultData, subscribeToLocalDataChanges, trySync } from "@/lib/db";
 import type { SyncState } from "@/lib/types";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
 
@@ -17,7 +17,10 @@ export default function SettingsPage() {
     setSyncState(state);
   }
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+    return subscribeToLocalDataChanges(() => void refresh());
+  }, []);
 
   async function sync() {
     const result = await trySync();

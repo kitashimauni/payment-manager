@@ -4,10 +4,12 @@ import type {
   OutboxOperationType,
   Payment,
   PaymentMethod,
+  SyncChange,
   SyncState,
   UserSettings,
 } from "./types";
 import { defaultPaymentMethods } from "./default-payment-methods";
+import { parseSyncPullResponse, parseSyncPushResponse } from "./sync";
 
 const DB_NAME = "payment-manager-local";
 const DB_VERSION = 1;
@@ -21,9 +23,17 @@ const STORE_NAMES = [
 ] as const;
 
 type StoreName = (typeof STORE_NAMES)[number];
+type LocalEntityStoreName = Exclude<StoreName, "outbox" | "syncState">;
 
 export const OUTBOX_CHANGED_EVENT = "payment-manager:outbox-changed";
 export const SYNC_STATE_CHANGED_EVENT = "payment-manager:sync-state-changed";
+export const LOCAL_DATA_CHANGED_EVENT = "payment-manager:local-data-changed";
+
+export type LocalDataChange = {
+  kind: LocalEntityStoreName;
+  entityId: string;
+  source: "local" | "remote";
+};
 
 export function subscribeToOutboxChanges(onChange: () => void) {
   if (typeof window === "undefined") return () => undefined;
@@ -41,6 +51,14 @@ export function subscribeToSyncStateChanges(onChange: () => void) {
   return () => window.removeEventListener(SYNC_STATE_CHANGED_EVENT, handleChange);
 }
 
+export function subscribeToLocalDataChanges(onChange: (change: LocalDataChange) => void) {
+  if (typeof window === "undefined") return () => undefined;
+
+  const handleChange = (event: Event) => onChange((event as CustomEvent<LocalDataChange>).detail);
+  window.addEventListener(LOCAL_DATA_CHANGED_EVENT, handleChange);
+  return () => window.removeEventListener(LOCAL_DATA_CHANGED_EVENT, handleChange);
+}
+
 function notifyOutboxChanged() {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
@@ -50,6 +68,12 @@ function notifyOutboxChanged() {
 function notifySyncStateChanged() {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(SYNC_STATE_CHANGED_EVENT));
+  }
+}
+
+function notifyLocalDataChanged(change: LocalDataChange) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent<LocalDataChange>(LOCAL_DATA_CHANGED_EVENT, { detail: change }));
   }
 }
 
@@ -194,13 +218,14 @@ function addOutboxOperation(transaction: IDBTransaction, type: OutboxOperationTy
   });
 }
 
-function saveWithOutbox<T extends { id: string }>(storeName: StoreName, type: OutboxOperationType, value: T) {
+function saveWithOutbox<T extends { id: string }>(storeName: LocalEntityStoreName, type: OutboxOperationType, value: T) {
   return runWriteTransaction([storeName, "outbox"], (transaction, complete) => {
     transaction.objectStore(storeName).put(value);
     addOutboxOperation(transaction, type, value.id, value);
     complete(value);
   }).then((saved) => {
     notifyOutboxChanged();
+    notifyLocalDataChanged({ kind: storeName, entityId: value.id, source: "local" });
     return saved;
   });
 }
@@ -270,6 +295,7 @@ export function removePayment(id: string) {
     request.onerror = () => fail(request.error ?? new Error("Payment lookup failed"));
   }).then((removed) => {
     notifyOutboxChanged();
+    notifyLocalDataChanged({ kind: "payments", entityId: id, source: "local" });
     return removed;
   });
 }
@@ -288,13 +314,14 @@ export function saveGroup(group: Group) {
 }
 
 export function removeGroup(id: string) {
-  return runWriteTransaction(["groups", "payments", "settings", "outbox"], (transaction, complete, fail) => {
+  return runWriteTransaction<LocalDataChange[]>(["groups", "payments", "settings", "outbox"], (transaction, complete, fail) => {
     const groupRequest = transaction.objectStore("groups").get(id);
     const paymentsRequest = transaction.objectStore("payments").getAll();
     const settingsRequest = transaction.objectStore("settings").get("local");
     let group: Group | undefined;
     let payments: Payment[] = [];
     let settings: UserSettings | undefined;
+    const changes: LocalDataChange[] = [];
     let pendingRequests = 3;
 
     const finishRead = () => {
@@ -303,7 +330,7 @@ export function removeGroup(id: string) {
 
       try {
         if (!group) {
-          complete(undefined);
+          complete([]);
           return;
         }
 
@@ -314,18 +341,21 @@ export function removeGroup(id: string) {
             const ungrouped = { ...payment, groupId: null, updatedAt: timestamp };
             transaction.objectStore("payments").put(ungrouped);
             addOutboxOperation(transaction, "PAYMENT_UPSERT", payment.id, ungrouped);
+            changes.push({ kind: "payments", entityId: payment.id, source: "local" });
           });
 
         const deleted = { ...group, status: "archived" as const, deletedAt: timestamp, updatedAt: timestamp };
         transaction.objectStore("groups").put(deleted);
         addOutboxOperation(transaction, "GROUP_DELETE", id, deleted);
+        changes.push({ kind: "groups", entityId: id, source: "local" });
 
         if (settings?.currentGroupId === id) {
           const updatedSettings = { ...settings, currentGroupId: null, updatedAt: timestamp };
           transaction.objectStore("settings").put(updatedSettings);
           addOutboxOperation(transaction, "SETTINGS_UPSERT", updatedSettings.id, updatedSettings);
+          changes.push({ kind: "settings", entityId: updatedSettings.id, source: "local" });
         }
-        complete(undefined);
+        complete(changes);
       } catch (cause) {
         fail(cause);
       }
@@ -346,9 +376,10 @@ export function removeGroup(id: string) {
       finishRead();
     };
     settingsRequest.onerror = () => fail(settingsRequest.error ?? new Error("Settings lookup failed"));
-  }).then((removed) => {
+  }).then((changes) => {
     notifyOutboxChanged();
-    return removed;
+    changes.forEach(notifyLocalDataChanged);
+    return undefined;
   });
 }
 
@@ -390,6 +421,144 @@ export async function getSyncState() {
   };
 }
 
+type LocalSyncEntity = Group | PaymentMethod | Payment | UserSettings;
+
+function changeEntityKey(change: SyncChange) {
+  switch (change.type) {
+    case "GROUP_UPSERT":
+    case "GROUP_DELETE":
+      return `group:${change.entityId}`;
+    case "PAYMENT_METHOD_UPSERT":
+      return `payment-method:${change.entityId}`;
+    case "PAYMENT_UPSERT":
+    case "PAYMENT_DELETE":
+      return `payment:${change.entityId}`;
+    case "SETTINGS_UPSERT":
+      return "settings:local";
+  }
+}
+
+function outboxEntityKey(entry: OutboxEntry) {
+  switch (entry.type) {
+    case "GROUP_UPSERT":
+    case "GROUP_DELETE":
+      return `group:${entry.entityId}`;
+    case "PAYMENT_METHOD_UPSERT":
+      return `payment-method:${entry.entityId}`;
+    case "PAYMENT_UPSERT":
+    case "PAYMENT_DELETE":
+      return `payment:${entry.entityId}`;
+    case "SETTINGS_UPSERT":
+      return "settings:local";
+  }
+}
+
+function remoteEntity(change: SyncChange): { storeName: LocalEntityStoreName; value: LocalSyncEntity } {
+  switch (change.type) {
+    case "GROUP_UPSERT":
+    case "GROUP_DELETE":
+      return { storeName: "groups", value: change.payload };
+    case "PAYMENT_METHOD_UPSERT":
+      return { storeName: "paymentMethods", value: change.payload };
+    case "PAYMENT_UPSERT":
+    case "PAYMENT_DELETE":
+      return { storeName: "payments", value: change.payload };
+    case "SETTINGS_UPSERT":
+      return { storeName: "settings", value: change.payload };
+  }
+}
+
+function shouldApplyRemote(local: LocalSyncEntity | undefined, remote: LocalSyncEntity, hasPendingLocalChange: boolean) {
+  if (!local) return true;
+
+  const localUpdatedAt = Date.parse(local.updatedAt);
+  const remoteUpdatedAt = Date.parse(remote.updatedAt);
+  if (remoteUpdatedAt > localUpdatedAt) return true;
+  if (remoteUpdatedAt < localUpdatedAt) return false;
+  return !hasPendingLocalChange;
+}
+
+export function applyRemoteChanges(changes: SyncChange[], nextCursor: string | null, baseSyncState: SyncState) {
+  return runWriteTransaction<LocalDataChange[]>(
+    ["payments", "groups", "paymentMethods", "settings", "outbox", "syncState"],
+    (transaction, complete, fail) => {
+      let pendingReads = 6;
+      let groups: Group[] = [];
+      let paymentMethods: PaymentMethod[] = [];
+      let payments: Payment[] = [];
+      let settings: UserSettings[] = [];
+      let outbox: OutboxEntry[] = [];
+      let storedSyncState: SyncState | undefined;
+
+      const finishRead = () => {
+        pendingReads -= 1;
+        if (pendingReads > 0) return;
+
+        try {
+          const localByKey = new Map<string, LocalSyncEntity>();
+          groups.forEach((value) => localByKey.set(`group:${value.id}`, value));
+          paymentMethods.forEach((value) => localByKey.set(`payment-method:${value.id}`, value));
+          payments.forEach((value) => localByKey.set(`payment:${value.id}`, value));
+          settings.forEach((value) => localByKey.set("settings:local", value));
+          const pendingKeys = new Set(outbox.map(outboxEntityKey));
+          const applied: LocalDataChange[] = [];
+          const appliedKeys = new Set<string>();
+
+          for (const change of changes) {
+            const remote = remoteEntity(change);
+            if (!shouldApplyRemote(localByKey.get(changeEntityKey(change)), remote.value, pendingKeys.has(changeEntityKey(change)))) {
+              continue;
+            }
+            transaction.objectStore(remote.storeName).put(remote.value);
+            localByKey.set(changeEntityKey(change), remote.value);
+            const key = changeEntityKey(change);
+            if (!appliedKeys.has(key)) {
+              applied.push({ kind: remote.storeName, entityId: change.entityId, source: "remote" });
+              appliedKeys.add(key);
+            }
+          }
+
+          transaction.objectStore("syncState").put({
+            ...(storedSyncState ?? baseSyncState),
+            id: "default",
+            cursor: nextCursor,
+            lastSyncedAt: now(),
+          } satisfies SyncState);
+          complete(applied);
+        } catch (cause) {
+          fail(cause);
+        }
+      };
+
+      const readAll = <T>(storeName: StoreName, onSuccess: (values: T[]) => void) => {
+        const request = transaction.objectStore(storeName).getAll();
+        request.onsuccess = () => {
+          onSuccess(request.result as T[]);
+          finishRead();
+        };
+        request.onerror = () => fail(request.error ?? new Error(`${storeName} lookup failed`));
+      };
+
+      readAll<Group>("groups", (values) => { groups = values; });
+      readAll<PaymentMethod>("paymentMethods", (values) => { paymentMethods = values; });
+      readAll<Payment>("payments", (values) => { payments = values; });
+      readAll<UserSettings>("settings", (values) => { settings = values; });
+      readAll<OutboxEntry>("outbox", (values) => { outbox = values; });
+
+      const syncStateRequest = transaction.objectStore("syncState").get("default");
+      syncStateRequest.onsuccess = () => {
+        storedSyncState = syncStateRequest.result as SyncState | undefined;
+        finishRead();
+      };
+      syncStateRequest.onerror = () => fail(syncStateRequest.error ?? new Error("Sync state lookup failed"));
+    },
+  ).then((applied) => {
+    applied.forEach(notifyLocalDataChanged);
+    notifySyncStateChanged();
+    return applied.length;
+  });
+}
+
 export async function confirmSyncMigration(userId: string) {
   if (!userId) throw new Error("同期ユーザーIDがありません。");
 
@@ -408,44 +577,67 @@ export async function confirmSyncMigration(userId: string) {
   return next;
 }
 
-export async function trySync(syncUserId?: string | null) {
-  if (typeof window === "undefined" || !navigator.onLine) return "offline" as const;
-  if (!syncUserId) return "pending" as const;
+type SyncResult = "offline" | "pending" | "synced";
 
+async function performSync(syncUserId: string): Promise<SyncResult> {
   const outbox = await listOutbox();
   const syncState = await getSyncState();
-  if (!syncState.migrationConfirmed || syncState.syncOwnerUserId !== syncUserId) return "pending" as const;
-  try {
-    const response = await fetch("/api/sync/push", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ operations: outbox, cursor: syncState.cursor }),
-    });
-    if (!response.ok) return "pending" as const;
-    const result = (await response.json()) as { accepted?: string[]; changes?: unknown[]; nextCursor?: string | null };
-    const accepted = new Set(result.accepted ?? []);
-    if (accepted.size > 0) {
-      const db = await database();
-      const transaction = db.transaction("outbox", "readwrite");
-      const store = transaction.objectStore("outbox");
-      outbox.filter((entry) => accepted.has(entry.id)).forEach((entry) => store.delete(entry.id));
-      await transactionDone(transaction);
-      notifyOutboxChanged();
-    }
-    if (result.nextCursor !== undefined) {
-      await put<SyncState>("syncState", {
-        id: "default",
-        cursor: result.nextCursor ?? null,
-        lastSyncedAt: now(),
-        migrationConfirmed: syncState.migrationConfirmed,
-        syncOwnerUserId: syncState.syncOwnerUserId,
-      });
-      notifySyncStateChanged();
-    }
-    return accepted.size === outbox.length ? ("synced" as const) : ("pending" as const);
-  } catch {
-    return "pending" as const;
+  if (!syncState.migrationConfirmed || syncState.syncOwnerUserId !== syncUserId) return "pending";
+
+  const response = await fetch("/api/sync/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operations: outbox, cursor: syncState.cursor }),
+  });
+  if (!response.ok) return "pending";
+
+  const result = parseSyncPushResponse(await response.json());
+  const accepted = new Set(result.accepted);
+  const acceptedOutbox = outbox.filter((entry) => accepted.has(entry.id));
+  if (acceptedOutbox.length > 0) {
+    const db = await database();
+    const transaction = db.transaction("outbox", "readwrite");
+    const store = transaction.objectStore("outbox");
+    acceptedOutbox.forEach((entry) => store.delete(entry.id));
+    await transactionDone(transaction);
+    notifyOutboxChanged();
   }
+
+  if (result.changes.length > 0) {
+    await applyRemoteChanges(result.changes, syncState.cursor, syncState);
+  }
+
+  let cursor = syncState.cursor;
+  let hasMore = true;
+  while (hasMore) {
+    const endpoint = cursor ? `/api/sync/pull?cursor=${encodeURIComponent(cursor)}` : "/api/sync/pull";
+    const pullResponse = await fetch(endpoint);
+    if (!pullResponse.ok) return "pending";
+
+    const pullResult = parseSyncPullResponse(await pullResponse.json());
+    if (pullResult.hasMore && pullResult.nextCursor === cursor) {
+      throw new Error("同期カーソルが進みませんでした。");
+    }
+    await applyRemoteChanges(pullResult.changes, pullResult.nextCursor, syncState);
+    cursor = pullResult.nextCursor;
+    hasMore = pullResult.hasMore;
+  }
+
+  return acceptedOutbox.length === outbox.length ? "synced" : "pending";
+}
+
+let syncInFlight: { userId: string; promise: Promise<SyncResult> } | undefined;
+
+export function trySync(syncUserId?: string | null): Promise<SyncResult> {
+  if (typeof window === "undefined" || !navigator.onLine) return Promise.resolve("offline");
+  if (!syncUserId) return Promise.resolve("pending");
+  if (syncInFlight) return syncInFlight.userId === syncUserId ? syncInFlight.promise : Promise.resolve("pending");
+
+  const promise = performSync(syncUserId).catch(() => "pending" as const).finally(() => {
+    if (syncInFlight?.promise === promise) syncInFlight = undefined;
+  });
+  syncInFlight = { userId: syncUserId, promise };
+  return promise;
 }
 
 export { uuid, now };

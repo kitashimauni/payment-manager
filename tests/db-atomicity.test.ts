@@ -10,6 +10,7 @@ import {
   getGroup,
   getPayment,
   getSettings,
+  getSyncState,
   listGroups,
   listPaymentMethods,
   listOutbox,
@@ -20,8 +21,10 @@ import {
   savePayment,
   savePaymentMethod,
   saveSettings,
+  applyRemoteChanges,
   confirmSyncMigration,
   subscribeToOutboxChanges,
+  subscribeToLocalDataChanges,
   trySync,
 } from "../src/lib/db";
 import type { Payment, PaymentMethod } from "../src/lib/types";
@@ -275,11 +278,13 @@ describe("IndexedDB entity/outbox atomicity", () => {
     await confirmSyncMigration("test-user");
     const listener = vi.fn();
     const unsubscribe = subscribeToOutboxChanges(listener);
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ accepted: outbox.map((entry) => entry.id) }), {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: outbox.map((entry) => entry.id), changes: [] }), {
         headers: { "Content-Type": "application/json" },
-      }),
-    );
+      }))
+      .mockResolvedValue(new Response(JSON.stringify({ changes: [], nextCursor: null, hasMore: false }), {
+        headers: { "Content-Type": "application/json" },
+      }));
 
     await expect(trySync("test-user")).resolves.toBe("synced");
 
@@ -287,6 +292,87 @@ describe("IndexedDB entity/outbox atomicity", () => {
     expect(await listOutbox()).toEqual([]);
     fetchMock.mockRestore();
     unsubscribe();
+  });
+
+  it("coalesces an outbox-triggered sync while the current sync is in flight", async () => {
+    await savePayment(payment("sync-single-flight"));
+    await confirmSyncMigration("test-user");
+    const outbox = await listOutbox();
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: outbox.map((entry) => entry.id), changes: [] }), {
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changes: [], nextCursor: null, hasMore: false }), {
+        headers: { "Content-Type": "application/json" },
+      }));
+    const trigger = vi.fn(() => void trySync("test-user"));
+    const unsubscribe = subscribeToOutboxChanges(trigger);
+
+    await expect(trySync("test-user")).resolves.toBe("synced");
+
+    expect(trigger).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fetchMock.mockRestore();
+    unsubscribe();
+  });
+
+  it("applies remote changes without creating outbox entries", async () => {
+    const timestamp = "2026-09-07T00:00:00.000Z";
+    const remote = payment("remote-apply");
+    const remoteChange = {
+      type: "PAYMENT_UPSERT" as const,
+      entityId: remote.id,
+      payload: { ...remote, createdAt: timestamp, updatedAt: timestamp, paidAt: timestamp },
+    };
+    const listener = vi.fn();
+    const unsubscribe = subscribeToLocalDataChanges(listener);
+
+    await applyRemoteChanges([remoteChange], "remote-cursor", await getSyncState());
+
+    expect(await getPayment(remote.id)).toEqual(remoteChange.payload);
+    expect((await listOutbox()).some((entry) => entry.entityId === remote.id)).toBe(false);
+    expect(await getSyncState()).toMatchObject({ cursor: "remote-cursor", lastSyncedAt: expect.any(String) });
+    expect(listener).toHaveBeenCalledWith({ kind: "payments", entityId: remote.id, source: "remote" });
+    unsubscribe();
+  });
+
+  it("keeps a pending local change when the remote version is older", async () => {
+    const local = { ...payment("remote-lww"), updatedAt: "2026-09-07T00:02:00.000Z" };
+    const olderRemote = {
+      ...local,
+      amount: 1,
+      updatedAt: "2026-09-07T00:01:00.000Z",
+    };
+    await savePayment(local);
+
+    await applyRemoteChanges([
+      { type: "PAYMENT_UPSERT", entityId: local.id, payload: olderRemote },
+    ], "remote-lww-cursor", await getSyncState());
+
+    expect(await getPayment(local.id)).toEqual(local);
+    expect((await listOutbox()).some((entry) => entry.entityId === local.id)).toBe(true);
+  });
+
+  it("converges to the server state returned for a stale push", async () => {
+    const local = { ...payment("stale-push"), amount: 1200, updatedAt: "2026-09-07T00:01:00.000Z" };
+    const server = { ...local, amount: 2400, updatedAt: "2026-09-07T00:02:00.000Z" };
+    await savePayment(local);
+    await confirmSyncMigration("test-user");
+    const outbox = await listOutbox();
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        accepted: outbox.map((entry) => entry.id),
+        changes: [{ type: "PAYMENT_UPSERT", entityId: server.id, payload: server }],
+      }), { headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changes: [], nextCursor: null, hasMore: false }), {
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    await expect(trySync("test-user")).resolves.toBe("synced");
+
+    expect(await getPayment(server.id)).toEqual(server);
+    expect(await listOutbox()).toEqual([]);
+    fetchMock.mockRestore();
   });
 
   it("stops pushing when the authenticated account differs from the sync owner", async () => {

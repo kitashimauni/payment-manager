@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { listPaymentMethods, now, savePaymentMethod, seedDefaultData, uuid } from "@/lib/db";
+import { listPaymentMethods, now, savePaymentMethod, seedDefaultData, subscribeToLocalDataChanges, uuid } from "@/lib/db";
 import type { PaymentMethod } from "@/lib/types";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
 
@@ -18,7 +18,10 @@ export default function PaymentMethodsPage() {
     setLoading(false);
   }
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+    return subscribeToLocalDataChanges(() => void refresh());
+  }, []);
 
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

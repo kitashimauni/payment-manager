@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { listGroups, listPayments, getSettings, now, saveGroup, saveSettings, seedDefaultData, uuid } from "@/lib/db";
+import { listGroups, listPayments, getSettings, now, saveGroup, saveSettings, seedDefaultData, subscribeToLocalDataChanges, uuid } from "@/lib/db";
 import { formatYen } from "@/lib/format";
 import type { Group, Payment, UserSettings } from "@/lib/types";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
@@ -22,7 +22,10 @@ export default function GroupsPage() {
     setLoading(false);
   }
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+    return subscribeToLocalDataChanges(() => void refresh());
+  }, []);
 
   const stats = useMemo(() => new Map(groups.map((group) => {
     const items = payments.filter((payment) => payment.groupId === group.id);

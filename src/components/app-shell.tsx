@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
-import { listOutbox, subscribeToOutboxChanges, subscribeToSyncStateChanges, trySync } from "@/lib/db";
+import { listOutbox, subscribeToOutboxChanges, trySync } from "@/lib/db";
 import { OfflineAwareLink } from "./offline-aware-link";
 import { PwaRegistration } from "./pwa-registration";
 import { SyncMigrationPrompt } from "./sync-migration-prompt";
@@ -44,8 +44,7 @@ function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
     };
     const handleOnline = () => void refresh();
     const handleOffline = () => update();
-    const unsubscribeFromOutbox = subscribeToOutboxChanges(() => void refreshPending());
-    const unsubscribeFromSyncState = subscribeToSyncStateChanges(() => void refresh());
+    const unsubscribeFromOutbox = subscribeToOutboxChanges(() => void refresh());
 
     void refresh();
     window.addEventListener("online", handleOnline);
@@ -53,7 +52,6 @@ function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
     return () => {
       active = false;
       unsubscribeFromOutbox();
-      unsubscribeFromSyncState();
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };

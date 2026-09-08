@@ -6,6 +6,7 @@ import {
   confirmSyncMigration,
   getSyncState,
   subscribeToSyncStateChanges,
+  trySync,
 } from "@/lib/db";
 import type { SyncState } from "@/lib/types";
 
@@ -49,6 +50,8 @@ export function SyncMigrationPrompt() {
     setError(null);
     try {
       await confirmSyncMigration(userId);
+      const result = await trySync(userId);
+      if (result === "pending") setError("同期を開始しましたが、未送信データが残っています。");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "同期を開始できませんでした。");
     } finally {

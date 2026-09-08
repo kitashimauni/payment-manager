@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { listGroups, listPaymentMethods, listPayments, seedDefaultData } from "@/lib/db";
+import { listGroups, listPaymentMethods, listPayments, seedDefaultData, subscribeToLocalDataChanges } from "@/lib/db";
 import type { Group, Payment, PaymentMethod } from "@/lib/types";
 import { PaymentDateHeading, PaymentList } from "@/components/payment-list";
 
@@ -12,15 +12,18 @@ export default function PaymentsPage() {
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
 
+  async function refresh() {
+    await seedDefaultData();
+    const [nextPayments, nextGroups, nextMethods] = await Promise.all([listPayments(), listGroups(), listPaymentMethods(true)]);
+    setPayments(nextPayments);
+    setGroups(nextGroups);
+    setMethods(nextMethods);
+    setLoading(false);
+  }
+
   useEffect(() => {
-    void (async () => {
-      await seedDefaultData();
-      const [nextPayments, nextGroups, nextMethods] = await Promise.all([listPayments(), listGroups(), listPaymentMethods(true)]);
-      setPayments(nextPayments);
-      setGroups(nextGroups);
-      setMethods(nextMethods);
-      setLoading(false);
-    })();
+    void refresh();
+    return subscribeToLocalDataChanges(() => void refresh());
   }, []);
 
   const filtered = useMemo(() => {
