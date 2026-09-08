@@ -16,7 +16,9 @@ async function registerPayment(page: Page, amount: string, title: string, method
 async function signInForSync(page: Page) {
   await openHome(page);
   await page.getByRole("button", { name: "E2Eテストユーザーでログイン", exact: true }).click();
-  await expect(page.getByRole("button", { name: "このアカウントで同期を開始", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "ログアウト", exact: true })).toBeVisible({ timeout: 15_000 });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "このアカウントで同期を開始", exact: true })).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "このアカウントで同期を開始", exact: true }).click();
   await expect(page.getByText("このアカウントで同期を開始", { exact: true })).toHaveCount(0);
 }
