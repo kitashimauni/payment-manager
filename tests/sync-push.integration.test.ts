@@ -122,6 +122,88 @@ integrationDescribe("authenticated sync push", () => {
     expect(settings).toMatchObject({ userId, currentGroupId: "group-1" });
   });
 
+  it("synchronizes two device cursors through update and delete conflicts", async () => {
+    const initialMethod = {
+      id: "operation-two-device-method",
+      type: "PAYMENT_METHOD_UPSERT",
+      entityId: "two-device-method",
+      createdAt: timestamp,
+      payload: { id: "two-device-method", name: "2デバイス用カード", sortOrder: 0, isActive: true, createdAt: timestamp, updatedAt: timestamp, deletedAt: null },
+    };
+    const initial = {
+      id: "operation-two-device-initial",
+      type: "PAYMENT_UPSERT",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: paymentPayload("two-device-payment", "two-device-method"),
+    };
+    expect((await post(request([initialMethod, initial]))).status).toBe(200);
+
+    const deviceAPull = await pull(pullRequest());
+    const deviceBPull = await pull(pullRequest());
+    const deviceABody = (await deviceAPull.json()) as { changes: Array<{ entityId: string }>; nextCursor: string | null; hasMore: boolean };
+    const deviceBBody = (await deviceBPull.json()) as { changes: Array<{ entityId: string }>; nextCursor: string | null; hasMore: boolean };
+    expect(deviceAPull.status).toBe(200);
+    expect(deviceBPull.status).toBe(200);
+    expect(deviceABody.changes).toEqual([
+      { type: "PAYMENT_METHOD_UPSERT", entityId: "two-device-method", payload: expect.any(Object) },
+      { type: "PAYMENT_UPSERT", entityId: "two-device-payment", payload: expect.any(Object) },
+    ]);
+    expect(deviceBBody.nextCursor).toBe(deviceABody.nextCursor);
+
+    const newerUpdate = {
+      id: "operation-two-device-newer-update",
+      type: "PAYMENT_UPSERT",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: { ...paymentPayload("two-device-payment", "two-device-method"), amount: 2400, updatedAt: "2026-09-08T00:02:00.000Z" },
+    };
+    expect((await post(request([newerUpdate]))).status).toBe(200);
+
+    const olderUpdate = {
+      id: "operation-two-device-older-update",
+      type: "PAYMENT_UPSERT",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: { ...newerUpdate.payload, amount: 1800, updatedAt: "2026-09-08T00:01:00.000Z" },
+    };
+    const staleUpdateResponse = await post(request([olderUpdate]));
+    const staleUpdateBody = (await staleUpdateResponse.json()) as { changes: Array<{ type: string; entityId: string; payload: { amount: number } }> };
+    expect(staleUpdateResponse.status).toBe(200);
+    expect(staleUpdateBody.changes).toEqual([{ type: "PAYMENT_UPSERT", entityId: "two-device-payment", payload: expect.objectContaining({ amount: 2400 }) }]);
+
+    const deviceBUpdatePull = await pull(pullRequest(deviceBBody.nextCursor!));
+    const deviceBUpdateBody = (await deviceBUpdatePull.json()) as { changes: Array<{ type: string; entityId: string; payload: { amount: number } }>; nextCursor: string | null };
+    expect(deviceBUpdatePull.status).toBe(200);
+    expect(deviceBUpdateBody.changes).toEqual([{ type: "PAYMENT_UPSERT", entityId: "two-device-payment", payload: expect.objectContaining({ amount: 2400 }) }]);
+
+    const deleteOperation = {
+      id: "operation-two-device-delete",
+      type: "PAYMENT_DELETE",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: { ...newerUpdate.payload, updatedAt: "2026-09-08T00:03:00.000Z", deletedAt: "2026-09-08T00:03:00.000Z" },
+    };
+    expect((await post(request([deleteOperation]))).status).toBe(200);
+
+    const staleAfterDelete = {
+      id: "operation-two-device-stale-after-delete",
+      type: "PAYMENT_UPSERT",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: { ...newerUpdate.payload, amount: 3600, updatedAt: "2026-09-08T00:02:30.000Z", deletedAt: null },
+    };
+    const staleAfterDeleteResponse = await post(request([staleAfterDelete]));
+    const staleAfterDeleteBody = (await staleAfterDeleteResponse.json()) as { changes: Array<{ type: string; entityId: string; payload: { deletedAt: string | null } }> };
+    expect(staleAfterDeleteResponse.status).toBe(200);
+    expect(staleAfterDeleteBody.changes).toEqual([{ type: "PAYMENT_DELETE", entityId: "two-device-payment", payload: expect.objectContaining({ deletedAt: "2026-09-08T00:03:00.000Z" }) }]);
+
+    const deviceBDeletePull = await pull(pullRequest(deviceBUpdateBody.nextCursor!));
+    const deviceBDeleteBody = (await deviceBDeletePull.json()) as { changes: Array<{ type: string; entityId: string; payload: { deletedAt: string | null } }> };
+    expect(deviceBDeletePull.status).toBe(200);
+    expect(deviceBDeleteBody.changes).toEqual([{ type: "PAYMENT_DELETE", entityId: "two-device-payment", payload: expect.objectContaining({ deletedAt: "2026-09-08T00:03:00.000Z" }) }]);
+  });
+
   it("keeps the newer server state when an older update arrives", async () => {
     const newer = {
       id: "operation-lww-newer",

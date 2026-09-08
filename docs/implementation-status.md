@@ -16,7 +16,7 @@
 | Sync API | Push/Pull実装済み | 端末・アカウント確認済みの`POST /api/sync/push`でOutboxをPostgreSQLへupsertし、`GET /api/sync/pull?cursor=...`でユーザー所有の変更をサーバー採番の`sync_version`順で返す。Pull結果はOutboxを生成せずIndexedDBへ適用し、未認証・確認前・未設定時はOutboxを保持する |
 | 認証 | Issue #1の基盤を実装済み | Auth.js + Google OAuth、Auth.js生成のUUIDユーザーID、未設定時のLocal Only表示、OAuth `accounts`テーブル |
 | PostgreSQL/Drizzle | 実装済み | `src/server/db/schema.ts` と `drizzle/` にAuth.jsのユーザー/アカウント、および所有ユーザー、グループ、支払い方法、支払い、ユーザー設定の定義を追加 |
-| 自動テスト/CI | 実装済み | IndexedDBの主要フローをVitestで検証し、GitHub Actionsでmise経由のinstall / typecheck / test / buildを実行 |
+| 自動テスト/CI | 実装済み | IndexedDBの主要フローとLWWのdelete/update競合をVitestで検証し、GitHub Actionsでmise経由のinstall / typecheck / test / buildを実行。PostgreSQL統合テストでは2デバイスのcursor同期も確認 |
 
 ## 重要な実装判断
 
@@ -40,5 +40,4 @@
 
 ## 残りの実装単位
 
-1. Last Write Wins、delete/update競合、2デバイス統合テストを拡充する。
-2. CSV/JSON Export、集計、検索をPhase 2として追加する。
+1. CSV/JSON Export、集計、検索をPhase 2として追加する。
