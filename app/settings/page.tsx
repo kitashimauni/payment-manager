@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import { getSettings, getSyncState, listGroups, listOutbox, listPaymentMethods, listPayments, seedDefaultData, subscribeToLocalDataChanges, trySync } from "@/lib/db";
+import { getSettings, getSyncState, listGroups, listOutbox, listPaymentMethods, listPayments, seedDefaultData, subscribeToLocalDataChanges, subscribeToOutboxChanges, trySync } from "@/lib/db";
 import type { Group, Payment, PaymentMethod, SyncState, UserSettings } from "@/lib/types";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
 import { PaymentExport } from "@/components/payment-export";
@@ -32,7 +32,12 @@ export default function SettingsPage() {
 
   useEffect(() => {
     void refresh();
-    return subscribeToLocalDataChanges(() => void refresh());
+    const unsubscribeFromLocalData = subscribeToLocalDataChanges(() => void refresh());
+    const unsubscribeFromOutbox = subscribeToOutboxChanges(() => void refresh());
+    return () => {
+      unsubscribeFromLocalData();
+      unsubscribeFromOutbox();
+    };
   }, []);
 
   async function sync() {
