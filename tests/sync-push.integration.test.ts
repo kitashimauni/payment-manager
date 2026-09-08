@@ -157,11 +157,12 @@ integrationDescribe("authenticated sync push", () => {
       updatedAt: "2026-09-08T01:00:00.000Z",
       deletedAt: null,
     };
+    const settingsUpdatedAt = new Date(Date.now() + 60_000).toISOString();
     const settings: UserSettings = {
       id: "local",
       currentGroupId: group.id,
       createdAt: "2026-09-08T01:00:00.000Z",
-      updatedAt: "2026-09-08T01:00:00.000Z",
+      updatedAt: settingsUpdatedAt,
     };
     const initialPayment: Payment = {
       id: "two-client-payment",
