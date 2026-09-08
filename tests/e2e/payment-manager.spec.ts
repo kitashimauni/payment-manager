@@ -173,8 +173,8 @@ test("flushes an offline payment after authenticated online recovery", async ({ 
   // Playwright restores transport here but does not consistently dispatch the
   // browser event that the application uses to start recovery.
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await expect.poll(() => outboxCount(page), { timeout: 30_000 }).toBe(0);
   await page.reload();
+  await expect.poll(() => outboxCount(page), { timeout: 30_000 }).toBe(0);
   await expect(page.getByText("同期待ちの変更はありません", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".network-status")).toHaveText("オンライン", { timeout: 30_000 });
   await expect(page.getByText("同期が完了しました", { exact: true })).toBeVisible();
