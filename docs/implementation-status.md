@@ -17,7 +17,7 @@
 | Sync API | Push/Pull実装済み | 端末・アカウント確認済みの`POST /api/sync/push`でOutboxをPostgreSQLへupsertし、`GET /api/sync/pull?cursor=...`でユーザー所有の変更をサーバー採番の`sync_version`順で返す。Pull結果はOutboxを生成せずIndexedDBへ適用し、未認証・確認前・未設定時はOutboxを保持する |
 | 認証 | Issue #1の基盤を実装済み | Auth.js + Google OAuth、Auth.js生成のUUIDユーザーID、未設定時のLocal Only表示、OAuth `accounts`テーブル |
 | PostgreSQL/Drizzle | 実装済み | `src/server/db/schema.ts` と `drizzle/` にAuth.jsのユーザー/アカウント、および所有ユーザー、グループ、支払い方法、支払い、ユーザー設定の定義を追加 |
-| 自動テスト/CI | 実装済み | IndexedDBの主要フローとLWWのdelete/update競合をVitestで検証し、Playwrightで主要画面のCRUD、検索/集計、Export/Import、オフライン/PWA、Group・Payment Method履歴を検証。GitHub Actionsでmise経由のinstall / typecheck / test / build / Chromium E2Eを実行。PostgreSQL統合テストでは2デバイスのcursor同期も確認 |
+| 自動テスト/CI | 実装済み | IndexedDBの主要フローとLWWのdelete/update競合をVitestで検証し、Playwrightで主要画面のCRUD、検索/集計、Export/Import、オフライン/PWA、Group・Payment Method履歴、認証済みoffline→online同期を検証。GitHub Actionsでmise経由のinstall / typecheck / test / build / Chromium E2Eを実行。PostgreSQL統合テストでは2デバイスのcursor同期も確認 |
 
 ## 重要な実装判断
 
@@ -40,7 +40,7 @@
 - 同期対象にはサーバー採番の`sync_version`を付与し、同一ユーザーのPush transactionではtransaction advisory lockを取得して採番順とcommit順を一致させる。Pullはrepeatable readのsnapshotから`sync_version`をopaque cursorとして安定した順序を作る。クライアント由来の`updatedAt`はLWW判定用に残し、cursorの進行には使わない。論理削除も変更として返す。Pull結果はIndexedDBの同一readwrite transactionで各Entityへ適用し、remote applyではOutboxを生成しない。`updatedAt`の新しい変更を優先し、同値では保留中Outboxを持つローカル変更を優先する。Push側にも同じ時刻比較を置き、サーバーの新しい状態を古い更新で上書きしない。Pushで古い更新を無視した場合は現在のサーバーEntityをレスポンスへ返し、cursorを進めずにremote applyしてクライアントを収束させる。
 - Entityの更新と対応するOutbox追加は同じIndexedDB readwrite transactionで実行し、Group削除時の関連更新も一括でコミットする。
 - 履歴の一括操作は現在の検索結果に含まれるPaymentだけを対象とし、選択状態を明示する。Group変更、Payment Method変更、論理削除の各Payment更新とOutbox追加を一つのIndexedDB readwrite transactionで行い、更新日時は操作単位で揃える。
-- ブラウザE2Eは実OAuthログインに依存せず、認証環境変数を空にしたLocal Onlyモードで、ユーザー価値に直結する主要フローとService Workerのオフライン遷移を確認する。CIのブラウザサーバーは本番ビルドを`next start`で起動し、ローカルと同じmiseのNode.js 26環境を使う。
+- ブラウザE2Eの主要フローは実OAuthログインに依存せずLocal Onlyモードで確認し、同期の復帰経路だけはCI専用Credentials providerとPostgreSQL上のテストユーザーで認証済みPush/Pullまで検証する。CIのブラウザサーバーは本番ビルドを`next start`で起動し、ローカルと同じmiseのNode.js 26環境を使う。
 - サーバー側のIDはクライアント生成値をそのまま保持し、ユーザーごとの複合主キーで初期決済手段IDの衝突を防ぐ。
 - Paymentの支払い方法・Group参照はユーザーIDを含む複合外部キーにし、ユーザーをまたぐ参照をDBでも拒否する。
 - PWAは192px/512pxのアイコンをマニフェストへ登録し、主要ナビゲーションとNext.jsの静的アセットをService Workerでキャッシュする。Payment/Groupの詳細リンクは表示領域の近くに入った時点で詳細HTMLと参照アセットを順次ウォームし、登録直後のウォームは入力完了を待たずにバックグラウンドで実行する。オフラインの詳細リンクはドキュメント遷移で開く。ナビゲーション、RSC、API、その他のアセットは用途別にオフライン応答を分離し、未キャッシュの動的URLへホームHTMLを誤返却しない。

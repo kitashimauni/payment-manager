@@ -21,9 +21,10 @@ mise exec -- pnpm dev
 | 変数 | 用途 | 必須 |
 | --- | --- | --- |
 | `DATABASE_URL` | Drizzleのマイグレーション、認証、同期API | DBを使う場合 |
-| `AUTH_SECRET` | Auth.jsのJWT署名 | Googleログイン時 |
+| `AUTH_SECRET` | Auth.jsのJWT署名 | Googleログイン / CIの同期E2E時 |
 | `AUTH_GOOGLE_ID` | Google OAuth Client ID | Googleログイン時 |
 | `AUTH_GOOGLE_SECRET` | Google OAuth Client Secret | Googleログイン時 |
+| `E2E_AUTH_USER_ID` / `E2E_AUTH_SECRET` | CI専用の同期E2E用Credentials provider | CIのE2E時のみ |
 | `SYNC_TEST_DATABASE_URL` | PostgreSQL統合テストの接続先 | 統合テスト時 |
 | `BASE_URL` | Playwright E2Eの接続先 | 接続先を変更する場合 |
 
@@ -100,6 +101,6 @@ mise exec -- pnpm exec playwright install chromium
 mise exec -- pnpm test:e2e
 ```
 
-CIではPostgreSQLマイグレーション、型検査、Vitest（統合テストを含む）、本番ビルド、ChromiumのPlaywright E2Eをすべて実行します。GitHubの既定ブランチは現在 `codex-init-project` です。機能ブランチのPRは、依存するPRをbaseにしてstackし、下位PRから順番にマージします。#26→#27→#28→#29の順でマージ後、必要に応じて既定ブランチを変更します。
+CIではPostgreSQLマイグレーション、型検査、Vitest（統合テストを含む）、本番ビルド、ChromiumのPlaywright E2Eをすべて実行します。Playwrightの同期E2EだけはCI専用Credentials providerでテストユーザーを発行し、認証済みのPush/Pullを実際のPostgreSQLに対して検証します。GitHubの既定ブランチは現在 `codex-init-project` です。機能ブランチのPRは、依存するPRをbaseにしてstackし、下位PRから順番にマージします。#26→#27→#28→#29の順でマージ後、必要に応じて既定ブランチを変更します。
 
 現在のアプリバージョンは `0.1.0` です。v0.1.0ではLocal First、Google OAuthを設定した同期、JSONバックアップ、主要画面のブラウザE2Eをリリース確認範囲とし、本番インフラ構築と実Googleアカウントでの運用検証はリリース後の作業とします。

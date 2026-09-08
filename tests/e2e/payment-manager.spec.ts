@@ -13,6 +13,14 @@ async function registerPayment(page: Page, amount: string, title: string, method
   await expect(page.getByRole("status")).toContainText("登録しました");
 }
 
+async function signInForSync(page: Page) {
+  await openHome(page);
+  await page.getByRole("button", { name: "E2Eテストユーザーでログイン", exact: true }).click();
+  await expect(page.getByRole("button", { name: "このアカウントで同期を開始", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "このアカウントで同期を開始", exact: true }).click();
+  await expect(page.getByText("このアカウントで同期を開始", { exact: true })).toHaveCount(0);
+}
+
 test("supports payment registration, editing, and logical deletion", async ({ page }) => {
   await openHome(page);
   await registerPayment(page, "1280", "E2Eランチ", "Visa");
@@ -127,6 +135,22 @@ test("keeps local payment registration available offline and navigates cached PW
   await expect(page.getByRole("heading", { name: "支払い履歴" })).toBeVisible();
   await expect(page.locator(".payment-row").filter({ hasText: "E2Eオフライン" })).toHaveCount(1);
   await context.setOffline(false);
+});
+
+test("flushes an offline payment after authenticated online recovery", async ({ page, context }) => {
+  test.skip(!process.env.E2E_AUTH_USER_ID, "requires the CI-only E2E auth provider");
+
+  await signInForSync(page);
+  await context.setOffline(true);
+  await registerPayment(page, "1120", "E2E同期復帰");
+
+  await page.goto("/settings");
+  await expect(page.getByText("1件の変更が同期待ち", { exact: true })).toBeVisible();
+
+  await context.setOffline(false);
+  await expect(page.locator(".network-status")).toContainText("オンライン");
+  await expect(page.getByText("同期待ちの変更はありません", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("同期が完了しました", { exact: true })).toBeVisible();
 });
 
 test("creates a group, applies it to a payment, and unlinks it on deletion", async ({ page }) => {

@@ -20,9 +20,12 @@ export default defineConfig({
     reuseExistingServer: !isCI,
     timeout: 120_000,
     env: {
-      AUTH_SECRET: "",
+      DATABASE_URL: process.env.DATABASE_URL ?? "",
+      AUTH_SECRET: process.env.AUTH_SECRET ?? "",
       AUTH_GOOGLE_ID: "",
       AUTH_GOOGLE_SECRET: "",
+      E2E_AUTH_USER_ID: process.env.E2E_AUTH_USER_ID ?? "",
+      E2E_AUTH_SECRET: process.env.E2E_AUTH_SECRET ?? "",
     },
   },
 });
