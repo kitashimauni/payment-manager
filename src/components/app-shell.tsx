@@ -43,16 +43,27 @@ function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
       await refreshPending();
     };
     const handleOnline = () => void refresh();
+    let onlineRetryTimer: number | undefined;
+    const retryOnlineSync = () => {
+      window.clearTimeout(onlineRetryTimer);
+      onlineRetryTimer = window.setTimeout(() => {
+        onlineRetryTimer = undefined;
+        void refresh();
+      }, 1_000);
+    };
     const handleOffline = () => update();
     const unsubscribeFromOutbox = subscribeToOutboxChanges(() => void refresh());
 
     void refresh();
     window.addEventListener("online", handleOnline);
+    window.addEventListener("online", retryOnlineSync);
     window.addEventListener("offline", handleOffline);
     return () => {
       active = false;
       unsubscribeFromOutbox();
       window.removeEventListener("online", handleOnline);
+      window.removeEventListener("online", retryOnlineSync);
+      window.clearTimeout(onlineRetryTimer);
       window.removeEventListener("offline", handleOffline);
     };
   }, [syncUserId]);
