@@ -67,6 +67,15 @@ function backup(overrides: Partial<PaymentExportData> = {}): PaymentExportData {
   };
 }
 
+function legacyBackup(overrides: Partial<PaymentExportData["payments"][number]> = {}) {
+  const legacyPayment = { ...payment("legacy-payment"), groupName: group.name, paymentMethodName: paymentMethod.name, ...overrides };
+  return {
+    schemaVersion: 1,
+    exportedAt: "2026-09-09T15:00:00.000Z",
+    payments: [legacyPayment],
+  };
+}
+
 describe("payment backup import", () => {
   afterAll(async () => {
     await new Promise<void>((resolve) => {
@@ -87,6 +96,33 @@ describe("payment backup import", () => {
     expect(parsePaymentBackup({ ...backup(), payments: [{ ...backup().payments[0], groupId: "missing-group" }] }).ok).toBe(false);
     expect(parsePaymentBackup({ ...backup(), payments: [{ ...backup().payments[0], paymentMethodId: "missing-method" }] }).ok).toBe(false);
     expect(parsePaymentBackup({ ...backup(), groups: [group, group] }).ok).toBe(false);
+  });
+
+  it("migrates the legacy v1 payment-only snapshot with restorable references", async () => {
+    const legacy = legacyBackup({ id: "legacy-payment", groupId: "legacy-group", paymentMethodId: "legacy-method" });
+    const parsed = parsePaymentBackup(legacy);
+
+    expect(parsed).toEqual({
+      ok: true,
+      data: expect.objectContaining({
+        groups: [expect.objectContaining({ id: "legacy-group", name: group.name, status: "active" })],
+        paymentMethods: [expect.objectContaining({ id: "legacy-method", name: paymentMethod.name, isActive: true })],
+        settings: null,
+      }),
+    });
+    if (!parsed.ok) throw new Error(parsed.error);
+
+    const result = await importPaymentBackup(parsed.data);
+
+    expect(result).toEqual({ applied: 3, skipped: 0 });
+    expect(await getGroup("legacy-group")).toEqual(expect.objectContaining({ id: "legacy-group", name: group.name }));
+    expect(await listPaymentMethods(true)).toContainEqual(expect.objectContaining({ id: "legacy-method", name: paymentMethod.name }));
+    expect(await getPayment("legacy-payment")).toEqual(expect.objectContaining({ paymentMethodId: "legacy-method", groupId: "legacy-group" }));
+  });
+
+  it("rejects a legacy snapshot when a referenced relation name is missing", () => {
+    expect(parsePaymentBackup(legacyBackup({ groupName: null }))).toEqual({ ok: false, error: "payments[0].groupNameから参照Entityを復元できません。" });
+    expect(parsePaymentBackup(legacyBackup({ paymentMethodName: null, paymentMethodId: "custom-method" }))).toEqual({ ok: false, error: "payments[0].paymentMethodNameから参照Entityを復元できません。" });
   });
 
   it("imports all entity types in one transaction and creates sync outbox entries", async () => {

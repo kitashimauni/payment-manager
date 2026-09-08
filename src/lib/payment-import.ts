@@ -1,4 +1,5 @@
 import type { PaymentExportData, PaymentExportRecord } from "./payment-export";
+import { defaultPaymentMethodName } from "./default-payment-methods";
 import type { Group, Payment, PaymentMethod, UserSettings } from "./types";
 
 type ImportRecord = Record<string, unknown>;
@@ -116,6 +117,67 @@ function parsePaymentMethod(value: unknown, index: number): PaymentMethod {
   };
 }
 
+function legacyRelationName(value: string | null, label: string) {
+  if (value === null || value.trim().length === 0 || value.length > 80) {
+    throw new Error(`${label}から参照Entityを復元できません。`);
+  }
+  return value;
+}
+
+function earliestTimestamp(left: string, right: string) {
+  return new Date(left).getTime() <= new Date(right).getTime() ? left : right;
+}
+
+function latestTimestamp(left: string, right: string) {
+  return new Date(left).getTime() >= new Date(right).getTime() ? left : right;
+}
+
+function parseLegacyEntities(payments: PaymentExportRecord[], exportedAt: string) {
+  const groups = new Map<string, Group>();
+  const paymentMethods = new Map<string, PaymentMethod>();
+
+  payments.forEach((payment, index) => {
+    if (payment.groupId !== null) {
+      const name = legacyRelationName(payment.groupName, `payments[${index}].groupName`);
+      const current = groups.get(payment.groupId);
+      if (current && current.name !== name) {
+        throw new Error(`payments[${index}].groupNameが同じgroupIdで一致しません。`);
+      }
+      groups.set(payment.groupId, {
+        id: payment.groupId,
+        name,
+        status: "active",
+        createdAt: current ? earliestTimestamp(current.createdAt, payment.createdAt) : payment.createdAt,
+        updatedAt: current ? latestTimestamp(current.updatedAt, payment.updatedAt) : payment.updatedAt,
+        deletedAt: null,
+      });
+    }
+
+    const paymentMethodName = payment.paymentMethodName ?? defaultPaymentMethodName(payment.paymentMethodId) ?? null;
+    const name = legacyRelationName(paymentMethodName, `payments[${index}].paymentMethodName`);
+    const current = paymentMethods.get(payment.paymentMethodId);
+    if (current && current.name !== name) {
+      throw new Error(`payments[${index}].paymentMethodNameが同じpaymentMethodIdで一致しません。`);
+    }
+    paymentMethods.set(payment.paymentMethodId, {
+      id: payment.paymentMethodId,
+      name,
+      sortOrder: current?.sortOrder ?? (defaultPaymentMethodName(payment.paymentMethodId) ? Number(payment.paymentMethodId.slice("default-method-".length)) : paymentMethods.size),
+      isActive: true,
+      createdAt: current ? earliestTimestamp(current.createdAt, payment.createdAt) : payment.createdAt,
+      updatedAt: current ? latestTimestamp(current.updatedAt, payment.updatedAt) : payment.updatedAt,
+      deletedAt: null,
+    });
+  });
+
+  return {
+    groups: [...groups.values()],
+    paymentMethods: [...paymentMethods.values()],
+    settings: null,
+    exportedAt,
+  };
+}
+
 function parseSettings(value: unknown): UserSettings | null {
   if (value === null || value === undefined) return null;
   if (!isRecord(value) || value.id !== "local") throw new Error("settingsが正しくありません。");
@@ -134,18 +196,23 @@ export function parsePaymentBackup(value: unknown): PaymentImportParseResult {
     if (!isRecord(value) || value.schemaVersion !== 1) throw new Error("対応していないバックアップ形式です。");
     const exportedAt = timestamp(value, "exportedAt", "exportedAt");
     const payments = arrayValue(value, "payments", "payments").map(parsePayment);
-    const groups = hasOwn(value, "groups") ? arrayValue(value, "groups", "groups").map(parseGroup) : [];
-    const paymentMethods = hasOwn(value, "paymentMethods") ? arrayValue(value, "paymentMethods", "paymentMethods").map(parsePaymentMethod) : [];
-    const settings = parseSettings(value.settings);
+    const hasEntitySnapshot = hasOwn(value, "groups") || hasOwn(value, "paymentMethods") || hasOwn(value, "settings");
+    if (hasEntitySnapshot && (!hasOwn(value, "groups") || !hasOwn(value, "paymentMethods") || !hasOwn(value, "settings"))) {
+      throw new Error("バックアップのEntity情報が不足しています。対応する旧形式の場合はEntity情報をすべて省略してください。");
+    }
+    const legacyEntities = hasEntitySnapshot ? null : parseLegacyEntities(payments, exportedAt);
+    const groups = legacyEntities?.groups ?? arrayValue(value, "groups", "groups").map(parseGroup);
+    const paymentMethods = legacyEntities?.paymentMethods ?? arrayValue(value, "paymentMethods", "paymentMethods").map(parsePaymentMethod);
+    const settings = legacyEntities?.settings ?? parseSettings(value.settings);
     const groupIds = uniqueIds(groups, "groups");
     const paymentMethodIds = uniqueIds(paymentMethods, "paymentMethods");
     uniqueIds(payments, "payments");
 
     payments.forEach((payment, index) => {
-      if (hasOwn(value, "groups") && payment.groupId && !groupIds.has(payment.groupId)) throw new Error(`payments[${index}]のgroupIdが存在しません。`);
-      if (hasOwn(value, "paymentMethods") && !paymentMethodIds.has(payment.paymentMethodId)) throw new Error(`payments[${index}]のpaymentMethodIdが存在しません。`);
+      if (payment.groupId && !groupIds.has(payment.groupId)) throw new Error(`payments[${index}]のgroupIdが存在しません。`);
+      if (!paymentMethodIds.has(payment.paymentMethodId)) throw new Error(`payments[${index}]のpaymentMethodIdが存在しません。`);
     });
-    if (settings?.currentGroupId && hasOwn(value, "groups") && !groupIds.has(settings.currentGroupId)) throw new Error("settings.currentGroupIdが存在しません。");
+    if (settings?.currentGroupId && !groupIds.has(settings.currentGroupId)) throw new Error("settings.currentGroupIdが存在しません。");
 
     return { ok: true, data: { schemaVersion: 1, exportedAt, payments, groups, paymentMethods, settings } };
   } catch (cause) {
