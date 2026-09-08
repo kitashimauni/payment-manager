@@ -1,4 +1,4 @@
-import type { Group, Payment, PaymentMethod } from "./types";
+import type { Group, Payment, PaymentMethod, UserSettings } from "./types";
 
 export type PaymentExportRecord = Payment & {
   groupName: string | null;
@@ -9,6 +9,9 @@ export type PaymentExportData = {
   schemaVersion: 1;
   exportedAt: string;
   payments: PaymentExportRecord[];
+  groups: Group[];
+  paymentMethods: PaymentMethod[];
+  settings: UserSettings | null;
 };
 
 const csvColumns: Array<{ key: keyof PaymentExportRecord; label: string }> = [
@@ -29,6 +32,7 @@ export function buildPaymentExportData(
   payments: readonly Payment[],
   groups: readonly Group[],
   paymentMethods: readonly PaymentMethod[],
+  settings: UserSettings | null,
   exportedAt: string,
 ): PaymentExportData {
   return {
@@ -41,6 +45,9 @@ export function buildPaymentExportData(
         groupName: groups.find((group) => group.id === payment.groupId)?.name ?? null,
         paymentMethodName: paymentMethods.find((method) => method.id === payment.paymentMethodId)?.name ?? null,
       })),
+    groups: [...groups],
+    paymentMethods: [...paymentMethods],
+    settings,
   };
 }
 

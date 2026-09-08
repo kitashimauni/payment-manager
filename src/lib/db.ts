@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { defaultPaymentMethods } from "./default-payment-methods";
 import { parseSyncPullResponse, parseSyncPushResponse } from "./sync";
+import type { PaymentExportData } from "./payment-export";
 
 const DB_NAME = "payment-manager-local";
 const DB_VERSION = 1;
@@ -227,6 +228,70 @@ function saveWithOutbox<T extends { id: string }>(storeName: LocalEntityStoreNam
     notifyOutboxChanged();
     notifyLocalDataChanged({ kind: storeName, entityId: value.id, source: "local" });
     return saved;
+  });
+}
+
+export type PaymentImportResult = {
+  applied: number;
+  skipped: number;
+};
+
+function isNewerImport<T extends { updatedAt: string }>(incoming: T, current: T | undefined) {
+  return !current || new Date(incoming.updatedAt).getTime() > new Date(current.updatedAt).getTime();
+}
+
+export function importPaymentBackup(data: PaymentExportData) {
+  const changes: LocalDataChange[] = [];
+  return runWriteTransaction<PaymentImportResult>(["groups", "paymentMethods", "payments", "settings", "outbox"], (transaction, complete, fail) => {
+    let applied = 0;
+    let skipped = 0;
+    const requests = [
+      ...data.groups.map((group) => ({ storeName: "groups" as const, value: group, upsert: "GROUP_UPSERT" as const, deleted: "GROUP_DELETE" as const })),
+      ...data.paymentMethods.map((method) => ({ storeName: "paymentMethods" as const, value: method, upsert: "PAYMENT_METHOD_UPSERT" as const, deleted: undefined })),
+      ...data.payments.map((payment) => ({ storeName: "payments" as const, value: payment, upsert: "PAYMENT_UPSERT" as const, deleted: "PAYMENT_DELETE" as const })),
+      ...(data.settings ? [{ storeName: "settings" as const, value: data.settings, upsert: "SETTINGS_UPSERT" as const, deleted: undefined }] : []),
+    ];
+
+    if (requests.length === 0) {
+      complete({ applied, skipped });
+      return;
+    }
+
+    let pending = requests.length;
+    const finishRequest = () => {
+      pending -= 1;
+      if (pending === 0) complete({ applied, skipped });
+    };
+
+    requests.forEach(({ storeName, value, upsert, deleted }) => {
+      const request = transaction.objectStore(storeName).get(value.id);
+      request.onsuccess = () => {
+        try {
+          const current = request.result as typeof value | undefined;
+          if (!isNewerImport(value, current)) {
+            skipped += 1;
+            finishRequest();
+            return;
+          }
+
+          transaction.objectStore(storeName).put(value);
+          const operation = "deletedAt" in value && value.deletedAt && deleted ? deleted : upsert;
+          addOutboxOperation(transaction, operation, value.id, value);
+          changes.push({ kind: storeName, entityId: value.id, source: "local" });
+          applied += 1;
+          finishRequest();
+        } catch (cause) {
+          fail(cause);
+        }
+      };
+      request.onerror = () => fail(request.error ?? new Error("Import lookup failed"));
+    });
+  }).then((result) => {
+    if (result.applied > 0) {
+      notifyOutboxChanged();
+      changes.forEach(notifyLocalDataChanged);
+    }
+    return result;
   });
 }
 
