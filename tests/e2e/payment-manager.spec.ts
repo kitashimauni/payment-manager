@@ -150,8 +150,8 @@ test("flushes an offline payment after authenticated online recovery", async ({ 
   await expect(page.getByText("1件の変更が同期待ち", { exact: true })).toBeVisible();
 
   await context.setOffline(false);
-  await expect(page.locator(".network-status")).toContainText("オンライン");
   await expect(page.getByText("同期待ちの変更はありません", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".network-status")).toHaveText("オンライン", { timeout: 30_000 });
   await expect(page.getByText("同期が完了しました", { exact: true })).toBeVisible();
 });
 
