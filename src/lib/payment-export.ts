@@ -44,14 +44,15 @@ export function buildPaymentExportData(
   };
 }
 
-function escapeCsvCell(value: unknown) {
-  const text = value === null || value === undefined ? "" : String(value);
+function escapeCsvCell(value: unknown, protectFormula = false) {
+  let text = value === null || value === undefined ? "" : String(value);
+  if (protectFormula && /^[=+@-]/.test(text)) text = `'${text}`;
   return `"${text.replace(/"/g, '""')}"`;
 }
 
 export function serializePaymentExportCsv(data: PaymentExportData) {
   const header = csvColumns.map((column) => escapeCsvCell(column.label)).join(",");
-  const rows = data.payments.map((payment) => csvColumns.map((column) => escapeCsvCell(payment[column.key])).join(","));
+  const rows = data.payments.map((payment) => csvColumns.map((column) => escapeCsvCell(payment[column.key], column.key === "title" || column.key === "groupName" || column.key === "paymentMethodName")).join(","));
   return `\uFEFF${[header, ...rows].join("\r\n")}\r\n`;
 }
 

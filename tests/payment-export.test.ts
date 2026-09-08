@@ -49,6 +49,13 @@ describe("payment export", () => {
     expect(csv.endsWith("\r\n")).toBe(true);
   });
 
+  it("prefixes formula-like free text before writing CSV", () => {
+    const formulaPayments = ["=1+1", "+SUM(A1)", "-10", "@command"].map((title, index) => payment(`formula-${index}`, { title }));
+    const csv = serializePaymentExportCsv(buildPaymentExportData(formulaPayments, groups, paymentMethods, "2026-09-09T15:00:00.000Z"));
+
+    for (const title of ["=1+1", "+SUM(A1)", "-10", "@command"]) expect(csv).toContain(`"'${title}"`);
+  });
+
   it("serializes valid JSON that can be read back without changing the snapshot", () => {
     const data = buildPaymentExportData([payment("json")], groups, paymentMethods, "2026-09-09T15:00:00.000Z");
 

@@ -3,6 +3,7 @@ import {
   ALL_FILTER,
   DEFAULT_PAYMENT_SEARCH_FILTERS,
   filterPayments,
+  isPaymentAmountFilterValid,
   isPaymentSearchActive,
   NO_GROUP_FILTER,
 } from "../src/lib/payment-search";
@@ -25,6 +26,11 @@ function payment(id: string, overrides: Partial<Payment> = {}): Payment {
 }
 
 describe("payment history search", () => {
+  it("does not transform invalid amount input such as exponent notation", () => {
+    expect(isPaymentAmountFilterValid("1e3")).toBe(false);
+    expect(filterPayments([payment("one-thousand", { amount: 1000 }), payment("thirteen", { amount: 13 })], { ...DEFAULT_PAYMENT_SEARCH_FILTERS, minAmount: "1e3" }).map((item) => item.id)).toEqual(["one-thousand", "thirteen"]);
+  });
+
   it("matches a partial title without regard to letter case", () => {
     const payments = [
       payment("coffee", { title: "Coffee beans" }),

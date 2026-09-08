@@ -10,10 +10,11 @@ import {
   DEFAULT_PAYMENT_SEARCH_FILTERS,
   filterPayments,
   isPaymentSearchActive,
+  isPaymentAmountFilterValid,
   NO_GROUP_FILTER,
   type PaymentSearchFilters,
 } from "@/lib/payment-search";
-import { formatSummaryPeriod, getMonthPeriod, summarizePayments, type PaymentSummaryRow, type SummaryPeriod } from "@/lib/payment-summary";
+import { formatSummaryPeriod, getMonthPeriod, isSummaryPeriodValid, summarizePayments, type PaymentSummaryRow, type SummaryPeriod } from "@/lib/payment-summary";
 
 type SummaryPeriodMode = "current" | "previous" | "custom";
 
@@ -34,8 +35,8 @@ export default function PaymentsPage() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [filters, setFilters] = useState<PaymentSearchFilters>(DEFAULT_PAYMENT_SEARCH_FILTERS);
   const [summaryPeriodMode, setSummaryPeriodMode] = useState<SummaryPeriodMode>("current");
-  const [summaryReferenceDate] = useState(() => new Date());
-  const [customSummaryPeriod, setCustomSummaryPeriod] = useState<SummaryPeriod>(() => getMonthPeriod(new Date()));
+  const [summaryReferenceDate, setSummaryReferenceDate] = useState(() => new Date());
+  const [customSummaryPeriod, setCustomSummaryPeriod] = useState<SummaryPeriod>(() => getMonthPeriod(summaryReferenceDate));
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
@@ -52,6 +53,16 @@ export default function PaymentsPage() {
     return subscribeToLocalDataChanges(() => void refresh());
   }, []);
 
+  useEffect(() => {
+    const refreshSummaryReferenceDate = () => setSummaryReferenceDate(new Date());
+    const timer = window.setInterval(refreshSummaryReferenceDate, 60_000);
+    document.addEventListener("visibilitychange", refreshSummaryReferenceDate);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshSummaryReferenceDate);
+    };
+  }, []);
+
   function updateFilter<Key extends keyof PaymentSearchFilters>(key: Key, value: PaymentSearchFilters[Key]) {
     setFilters((current) => ({ ...current, [key]: value }));
   }
@@ -66,12 +77,15 @@ export default function PaymentsPage() {
 
   const filtered = useMemo(() => filterPayments(payments, filters), [filters, payments]);
   const hasActiveFilters = isPaymentSearchActive(filters);
+  const invalidMinAmount = !isPaymentAmountFilterValid(filters.minAmount);
+  const invalidMaxAmount = !isPaymentAmountFilterValid(filters.maxAmount);
   const summaryPeriod = useMemo(() => {
     if (summaryPeriodMode === "previous") return getMonthPeriod(summaryReferenceDate, -1);
     if (summaryPeriodMode === "custom") return customSummaryPeriod;
     return getMonthPeriod(summaryReferenceDate);
   }, [customSummaryPeriod, summaryPeriodMode, summaryReferenceDate]);
   const summary = useMemo(() => summarizePayments(payments, groups, methods, summaryPeriod), [groups, methods, payments, summaryPeriod]);
+  const hasInvalidCustomPeriod = summaryPeriodMode === "custom" && !isSummaryPeriodValid(summaryPeriod);
   const hasIncompleteCustomPeriod = summaryPeriodMode === "custom" && (!summaryPeriod.fromDate || !summaryPeriod.toDate);
   const hasReversedCustomPeriod = summaryPeriodMode === "custom" && summaryPeriod.fromDate > summaryPeriod.toDate;
 
@@ -101,11 +115,13 @@ export default function PaymentsPage() {
           </label>
           <label className="field" htmlFor="payment-search-min-amount">
             <span className="field-label">最小金額（円）</span>
-            <input id="payment-search-min-amount" className="text-input" type="number" min="0" step="1" inputMode="numeric" value={filters.minAmount} onChange={(event) => updateFilter("minAmount", event.target.value.replace(/\D/g, ""))} placeholder="指定なし" />
+            <input id="payment-search-min-amount" className="text-input" type="text" inputMode="numeric" pattern="[0-9]*" value={filters.minAmount} aria-invalid={invalidMinAmount} onChange={(event) => updateFilter("minAmount", event.target.value)} placeholder="指定なし" />
+            {invalidMinAmount ? <span className="field-error">半角数字で入力してください。</span> : null}
           </label>
           <label className="field" htmlFor="payment-search-max-amount">
             <span className="field-label">最大金額（円）</span>
-            <input id="payment-search-max-amount" className="text-input" type="number" min="0" step="1" inputMode="numeric" value={filters.maxAmount} onChange={(event) => updateFilter("maxAmount", event.target.value.replace(/\D/g, ""))} placeholder="指定なし" />
+            <input id="payment-search-max-amount" className="text-input" type="text" inputMode="numeric" pattern="[0-9]*" value={filters.maxAmount} aria-invalid={invalidMaxAmount} onChange={(event) => updateFilter("maxAmount", event.target.value)} placeholder="指定なし" />
+            {invalidMaxAmount ? <span className="field-error">半角数字で入力してください。</span> : null}
           </label>
           <label className="field" htmlFor="payment-search-from-date">
             <span className="field-label">開始日</span>
@@ -144,16 +160,18 @@ export default function PaymentsPage() {
           <label className="field" htmlFor="summary-from-date"><span className="field-label">開始日</span><input id="summary-from-date" className="text-input" type="date" value={customSummaryPeriod.fromDate} onChange={(event) => updateCustomSummaryPeriod("fromDate", event.target.value)} /></label>
           <label className="field" htmlFor="summary-to-date"><span className="field-label">終了日</span><input id="summary-to-date" className="text-input" type="date" value={customSummaryPeriod.toDate} onChange={(event) => updateCustomSummaryPeriod("toDate", event.target.value)} /></label>
         </div> : null}
-        <p className={hasIncompleteCustomPeriod || hasReversedCustomPeriod ? "summary-period-label error-text" : "summary-period-label"}>{hasIncompleteCustomPeriod ? "開始日と終了日を入力してください。" : hasReversedCustomPeriod ? "開始日は終了日以前にしてください。" : formatSummaryPeriod(summaryPeriod)}</p>
-        <div className="summary-metrics">
-          <div className="summary-metric summary-metric-primary"><span className="summary-metric-label">合計額</span><strong>{formatYen(summary.total)}</strong></div>
-          <div className="summary-metric"><span className="summary-metric-label">支払い件数</span><strong>{summary.count}件</strong></div>
-          <div className="summary-metric"><span className="summary-metric-label">平均支払額</span><strong>{formatYen(summary.averageAmount)}</strong></div>
-        </div>
-        <div className="summary-breakdowns">
-          <SummaryBreakdown title="グループ別" rows={summary.byGroup} />
-          <SummaryBreakdown title="支払い方法別" rows={summary.byPaymentMethod} />
-        </div>
+        <p className={hasInvalidCustomPeriod ? "summary-period-label error-text" : "summary-period-label"}>{hasIncompleteCustomPeriod ? "開始日と終了日を入力してください。" : hasReversedCustomPeriod ? "開始日は終了日以前にしてください。" : formatSummaryPeriod(summaryPeriod)}</p>
+        {hasInvalidCustomPeriod ? <div className="summary-invalid" role="alert">有効な期間を指定すると集計を表示します。</div> : <>
+          <div className="summary-metrics">
+            <div className="summary-metric summary-metric-primary"><span className="summary-metric-label">合計額</span><strong>{formatYen(summary.total)}</strong></div>
+            <div className="summary-metric"><span className="summary-metric-label">支払い件数</span><strong>{summary.count}件</strong></div>
+            <div className="summary-metric"><span className="summary-metric-label">平均支払額</span><strong>{formatYen(summary.averageAmount)}</strong></div>
+          </div>
+          <div className="summary-breakdowns">
+            <SummaryBreakdown title="グループ別" rows={summary.byGroup} />
+            <SummaryBreakdown title="支払い方法別" rows={summary.byPaymentMethod} />
+          </div>
+        </>}
       </section>
       {loading ? <div className="loading-state">履歴を読み込んでいます…</div> : grouped.length === 0 ? <div className="panel"><div className="empty-state">この条件の支払いはありません。</div></div> : grouped.map(([date, items]) => (
         <section className="history-section" key={date}>

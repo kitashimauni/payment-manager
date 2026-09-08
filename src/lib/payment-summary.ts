@@ -36,6 +36,10 @@ export function formatSummaryPeriod(period: SummaryPeriod) {
   return `${period.fromDate.replace(/-/g, "/")} 〜 ${period.toDate.replace(/-/g, "/")}`;
 }
 
+export function isSummaryPeriodValid(period: SummaryPeriod) {
+  return Boolean(period.fromDate && period.toDate && period.fromDate <= period.toDate);
+}
+
 function localDateKey(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;

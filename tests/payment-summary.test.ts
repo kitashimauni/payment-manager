@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getMonthPeriod, summarizePayments } from "../src/lib/payment-summary";
+import { getMonthPeriod, isSummaryPeriodValid, summarizePayments } from "../src/lib/payment-summary";
 import type { Group, Payment, PaymentMethod } from "../src/lib/types";
 
 function payment(id: string, overrides: Partial<Payment> = {}): Payment {
@@ -66,5 +66,12 @@ describe("payment summary", () => {
     const referenceDate = new Date(2026, 8, 8);
     expect(getMonthPeriod(referenceDate)).toEqual({ fromDate: "2026-09-01", toDate: "2026-09-30" });
     expect(getMonthPeriod(referenceDate, -1)).toEqual({ fromDate: "2026-08-01", toDate: "2026-08-31" });
+    expect(getMonthPeriod(new Date(2026, 9, 1))).toEqual({ fromDate: "2026-10-01", toDate: "2026-10-31" });
+  });
+
+  it("rejects incomplete and reversed custom periods", () => {
+    expect(isSummaryPeriodValid({ fromDate: "", toDate: "2026-09-30" })).toBe(false);
+    expect(isSummaryPeriodValid({ fromDate: "2026-10-01", toDate: "2026-09-30" })).toBe(false);
+    expect(isSummaryPeriodValid({ fromDate: "2026-09-01", toDate: "2026-09-30" })).toBe(true);
   });
 });
