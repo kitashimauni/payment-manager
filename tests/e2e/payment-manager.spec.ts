@@ -28,10 +28,17 @@ async function outboxCount(page: Page) {
     const open = indexedDB.open("payment-manager-local");
     open.onerror = () => reject(open.error ?? new Error("IndexedDB could not be opened"));
     open.onsuccess = () => {
-      const transaction = open.result.transaction("outbox", "readonly");
+      const db = open.result;
+      const transaction = db.transaction("outbox", "readonly");
       const count = transaction.objectStore("outbox").count();
-      count.onsuccess = () => resolve(count.result);
-      count.onerror = () => reject(count.error ?? new Error("Outbox could not be read"));
+      count.onsuccess = () => {
+        db.close();
+        resolve(count.result);
+      };
+      count.onerror = () => {
+        db.close();
+        reject(count.error ?? new Error("Outbox could not be read"));
+      };
     };
   }));
 }
@@ -154,13 +161,6 @@ test("keeps local payment registration available offline and navigates cached PW
 
 test("flushes an offline payment after authenticated online recovery", async ({ page, context }) => {
   test.skip(!process.env.E2E_AUTH_USER_ID, "requires the CI-only E2E auth provider");
-  const syncResponses: string[] = [];
-  page.on("response", (response) => {
-    const path = new URL(response.url()).pathname;
-    if (["/api/sync/push", "/api/sync/pull"].includes(path)) {
-      syncResponses.push(`${response.status()} ${path}`);
-    }
-  });
 
   await signInForSync(page);
   await context.setOffline(true);
@@ -173,8 +173,6 @@ test("flushes an offline payment after authenticated online recovery", async ({ 
   // Playwright restores transport here but does not consistently dispatch the
   // browser event that the application uses to start recovery.
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
-  await page.waitForTimeout(2_000);
-  console.log(`online=${await page.evaluate(() => navigator.onLine)} sync=${syncResponses.join(",")}`);
   await expect.poll(() => outboxCount(page), { timeout: 30_000 }).toBe(0);
   await page.reload();
   await expect(page.getByText("同期待ちの変更はありません", { exact: true })).toBeVisible({ timeout: 30_000 });

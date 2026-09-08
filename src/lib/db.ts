@@ -24,6 +24,9 @@ const STORE_NAMES = [
 ] as const;
 
 type SyncResult = "offline" | "pending" | "synced";
+type SyncOptions = {
+  retryInFlight?: boolean;
+};
 
 type StoreName = (typeof STORE_NAMES)[number];
 type LocalEntityStoreName = Exclude<StoreName, "outbox" | "syncState">;
@@ -750,10 +753,16 @@ async function performSync(syncUserId: string): Promise<SyncResult> {
   return acceptedOutbox.length === outbox.length ? "synced" : "pending";
 }
 
-export function trySync(syncUserId?: string | null): Promise<SyncResult> {
+export function trySync(syncUserId?: string | null, options?: SyncOptions): Promise<SyncResult> {
   if (typeof window === "undefined" || !navigator.onLine) return Promise.resolve("offline");
   if (!syncUserId) return Promise.resolve("pending");
-  if (syncInFlight) return syncInFlight.userId === syncUserId ? syncInFlight.promise : Promise.resolve("pending");
+  if (syncInFlight) {
+    if (syncInFlight.userId === syncUserId) {
+      if (options?.retryInFlight) syncInFlight.rerunRequested = true;
+      return syncInFlight.promise;
+    }
+    return Promise.resolve("pending");
+  }
 
   const flight = {
     userId: syncUserId,

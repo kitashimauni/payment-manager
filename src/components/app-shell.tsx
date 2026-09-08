@@ -32,23 +32,23 @@ function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
         if (active) setPending(0);
       }
     };
-    const refresh = async () => {
+    const refresh = async (retryInFlight = false) => {
       update();
       await refreshPending();
       try {
-        await trySync(syncUserId);
+        await trySync(syncUserId, { retryInFlight });
       } catch {
         // Keep the locally calculated count when sync cannot be attempted.
       }
       await refreshPending();
     };
-    const handleOnline = () => void refresh();
+    const handleOnline = () => void refresh(true);
     let onlineRetryTimer: number | undefined;
     const retryOnlineSync = () => {
       window.clearTimeout(onlineRetryTimer);
       onlineRetryTimer = window.setTimeout(() => {
         onlineRetryTimer = undefined;
-        void refresh();
+        void refresh(true);
       }, 1_000);
     };
     const handleOffline = () => update();
