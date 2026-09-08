@@ -141,6 +141,12 @@ test("keeps local payment registration available offline and navigates cached PW
 
 test("flushes an offline payment after authenticated online recovery", async ({ page, context }) => {
   test.skip(!process.env.E2E_AUTH_USER_ID, "requires the CI-only E2E auth provider");
+  const syncResponses: string[] = [];
+  page.on("response", async (response) => {
+    const path = new URL(response.url()).pathname;
+    if (!["/api/sync/push", "/api/sync/pull"].includes(path)) return;
+    syncResponses.push(`${response.status()} ${path}: ${await response.text()}`);
+  });
 
   await signInForSync(page);
   await context.setOffline(true);
@@ -150,6 +156,8 @@ test("flushes an offline payment after authenticated online recovery", async ({ 
   await expect(page.getByText("1件の変更が同期待ち", { exact: true })).toBeVisible();
 
   await context.setOffline(false);
+  await page.waitForTimeout(5_000);
+  console.log(`sync responses:\n${syncResponses.join("\n")}`);
   await expect(page.getByText("同期待ちの変更はありません", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".network-status")).toHaveText("オンライン", { timeout: 30_000 });
   await expect(page.getByText("同期が完了しました", { exact: true })).toBeVisible();
