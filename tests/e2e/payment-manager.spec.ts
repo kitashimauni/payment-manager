@@ -23,6 +23,19 @@ async function signInForSync(page: Page) {
   await expect(page.getByText("このアカウントで同期を開始", { exact: true })).toHaveCount(0);
 }
 
+async function outboxCount(page: Page) {
+  return page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const open = indexedDB.open("payment-manager-local");
+    open.onerror = () => reject(open.error ?? new Error("IndexedDB could not be opened"));
+    open.onsuccess = () => {
+      const transaction = open.result.transaction("outbox", "readonly");
+      const count = transaction.objectStore("outbox").count();
+      count.onsuccess = () => resolve(count.result);
+      count.onerror = () => reject(count.error ?? new Error("Outbox could not be read"));
+    };
+  }));
+}
+
 test("supports payment registration, editing, and logical deletion", async ({ page }) => {
   await openHome(page);
   await registerPayment(page, "1280", "E2Eランチ", "Visa");
@@ -141,12 +154,6 @@ test("keeps local payment registration available offline and navigates cached PW
 
 test("flushes an offline payment after authenticated online recovery", async ({ page, context }) => {
   test.skip(!process.env.E2E_AUTH_USER_ID, "requires the CI-only E2E auth provider");
-  const syncResponses: string[] = [];
-  page.on("response", async (response) => {
-    const path = new URL(response.url()).pathname;
-    if (!["/api/sync/push", "/api/sync/pull"].includes(path)) return;
-    syncResponses.push(`${response.status()} ${path}: ${await response.text()}`);
-  });
 
   await signInForSync(page);
   await context.setOffline(true);
@@ -156,8 +163,8 @@ test("flushes an offline payment after authenticated online recovery", async ({ 
   await expect(page.getByText("1件の変更が同期待ち", { exact: true })).toBeVisible();
 
   await context.setOffline(false);
-  await page.waitForTimeout(5_000);
-  console.log(`sync responses:\n${syncResponses.join("\n")}`);
+  await expect.poll(() => outboxCount(page), { timeout: 30_000 }).toBe(0);
+  await page.reload();
   await expect(page.getByText("同期待ちの変更はありません", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".network-status")).toHaveText("オンライン", { timeout: 30_000 });
   await expect(page.getByText("同期が完了しました", { exact: true })).toBeVisible();
