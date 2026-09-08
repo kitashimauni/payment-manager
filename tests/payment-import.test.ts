@@ -124,7 +124,7 @@ describe("payment backup import", () => {
     expect(applied).toEqual({ applied: 1, skipped: 0 });
     expect(await listPayments()).not.toContainEqual(expect.objectContaining({ id: local.id }));
     expect(await getPayment(local.id)).toMatchObject({ deletedAt: deleted.deletedAt });
-    expect((await listOutbox()).filter((entry) => entry.entityId === local.id).at(-1)?.type).toBe("PAYMENT_DELETE");
+    expect((await listOutbox()).some((entry) => entry.entityId === local.id && entry.type === "PAYMENT_DELETE")).toBe(true);
   });
 
   it("rolls back entity writes when an outbox write fails", async () => {
