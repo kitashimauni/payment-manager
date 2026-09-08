@@ -16,7 +16,7 @@ const navigation = [
 ];
 
 function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
-  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
+  const [online, setOnline] = useState(false);
   const [pending, setPending] = useState(0);
 
   useEffect(() => {

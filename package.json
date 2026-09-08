@@ -9,6 +9,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "pwa:icons": "node scripts/generate-pwa-icons.mjs",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "db:check": "drizzle-kit check",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
@@ -27,6 +28,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "26.4.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",

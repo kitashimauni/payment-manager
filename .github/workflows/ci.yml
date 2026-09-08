@@ -53,3 +53,9 @@ jobs:
 
       - name: Run production build
         run: mise exec -- pnpm build
+
+      - name: Install Playwright browser
+        run: mise exec -- pnpm exec playwright install --with-deps chromium
+
+      - name: Run browser E2E
+        run: mise exec -- pnpm test:e2e

@@ -14,6 +14,21 @@ mise exec -- pnpm dev
 
 ブラウザで `http://localhost:3000` を開いてください。初回起動時に支払い方法の初期値（現金、Suica、PayPay、Visa、Mastercard、QUICPay）がIndexedDBへ作成されます。
 
+## 環境変数
+
+`.env.example`を`.env.local`へコピーして使用します。Local Firstの画面操作には認証用環境変数は必要ありません。
+
+| 変数 | 用途 | 必須 |
+| --- | --- | --- |
+| `DATABASE_URL` | Drizzleのマイグレーション、認証、同期API | DBを使う場合 |
+| `AUTH_SECRET` | Auth.jsのJWT署名 | Googleログイン時 |
+| `AUTH_GOOGLE_ID` | Google OAuth Client ID | Googleログイン時 |
+| `AUTH_GOOGLE_SECRET` | Google OAuth Client Secret | Googleログイン時 |
+| `SYNC_TEST_DATABASE_URL` | PostgreSQL統合テストの接続先 | 統合テスト時 |
+| `BASE_URL` | Playwright E2Eの接続先 | 接続先を変更する場合 |
+
+`AUTH_SECRET`、`AUTH_GOOGLE_ID`、`AUTH_GOOGLE_SECRET`、`DATABASE_URL`は、Googleログインを有効にする場合にすべて設定してください。未設定の変数がある場合はLocal Onlyで起動します。
+
 ## 実装済みMVP
 
 - 支払い登録（円整数、支払い方法、任意の名目）
@@ -62,12 +77,29 @@ PostgreSQLのテーブル定義は `src/server/db/schema.ts`、初回マイグ�
 ```bash
 cp .env.example .env.local
 # .env.local の DATABASE_URL を接続先に変更
-pnpm db:check
-pnpm db:migrate
+mise exec -- pnpm db:check
+mise exec -- pnpm db:migrate
 ```
 
 スキーマを変更した場合は、次のコマンドで新しいマイグレーションを生成します。
 
 ```bash
-pnpm db:generate
+mise exec -- pnpm db:generate
 ```
+
+## テストとリリース運用
+
+Node.js 26のmise環境で、次の順にローカル検証できます。
+
+```bash
+mise exec -- pnpm typecheck
+mise exec -- pnpm test
+mise exec -- pnpm db:check
+mise exec -- pnpm build
+mise exec -- pnpm exec playwright install chromium
+mise exec -- pnpm test:e2e
+```
+
+CIではPostgreSQLマイグレーション、型検査、Vitest（統合テストを含む）、本番ビルド、ChromiumのPlaywright E2Eをすべて実行します。GitHubの既定ブランチは現在 `codex-init-project` です。機能ブランチのPRは、依存するPRをbaseにしてstackし、下位PRから順番にマージします。#26→#27→#28→#29の順でマージ後、必要に応じて既定ブランチを変更します。
+
+現在のアプリバージョンは `0.1.0` です。v0.1.0ではLocal First、Google OAuthを設定した同期、JSONバックアップ、主要画面のブラウザE2Eをリリース確認範囲とし、本番インフラ構築と実Googleアカウントでの運用検証はリリース後の作業とします。
