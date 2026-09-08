@@ -1,11 +1,23 @@
 import { and, eq } from "drizzle-orm";
+import { IDBFactory } from "fake-indexeddb";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Group, Payment, PaymentMethod, UserSettings } from "../src/lib/types";
 
 const testDatabaseUrl = process.env.SYNC_TEST_DATABASE_URL;
 const { authMock } = vi.hoisted(() => ({ authMock: vi.fn() }));
 
 vi.mock("@/auth", () => ({ auth: authMock, authEnabled: true }));
+
+const windowMock = new EventTarget();
+Object.defineProperty(globalThis, "window", { value: windowMock, configurable: true });
+Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true });
+
+async function loadClient(indexedDB: IDBFactory) {
+  Object.defineProperty(windowMock, "indexedDB", { value: indexedDB, configurable: true });
+  vi.resetModules();
+  return import("../src/lib/db");
+}
 
 const integrationDescribe = testDatabaseUrl ? describe : describe.skip;
 
@@ -120,6 +132,203 @@ integrationDescribe("authenticated sync push", () => {
 
     expect(payment).toMatchObject({ userId, id: "payment-1", paymentMethodId: "method-1", groupId: "group-1" });
     expect(settings).toMatchObject({ userId, currentGroupId: "group-1" });
+  });
+
+  it("converges two independent IndexedDB clients through create, update, and delete conflicts", async () => {
+    const deviceA = await loadClient(new IDBFactory());
+    await deviceA.seedDefaultData();
+    const deviceB = await loadClient(new IDBFactory());
+    await deviceB.seedDefaultData();
+
+    const method: PaymentMethod = {
+      id: "two-client-method",
+      name: "2クライアントカード",
+      sortOrder: 0,
+      isActive: true,
+      createdAt: "2026-09-08T01:00:00.000Z",
+      updatedAt: "2026-09-08T01:00:00.000Z",
+      deletedAt: null,
+    };
+    const group: Group = {
+      id: "two-client-group",
+      name: "2クライアント旅行",
+      status: "active",
+      createdAt: "2026-09-08T01:00:00.000Z",
+      updatedAt: "2026-09-08T01:00:00.000Z",
+      deletedAt: null,
+    };
+    const settingsUpdatedAt = new Date(Date.now() + 60_000).toISOString();
+    const settings: UserSettings = {
+      id: "local",
+      currentGroupId: group.id,
+      createdAt: "2026-09-08T01:00:00.000Z",
+      updatedAt: settingsUpdatedAt,
+    };
+    const initialPayment: Payment = {
+      id: "two-client-payment",
+      amount: 1200,
+      paymentMethodId: method.id,
+      title: "初回登録",
+      groupId: group.id,
+      paidAt: "2026-09-08T01:00:00.000Z",
+      createdAt: "2026-09-08T01:00:00.000Z",
+      updatedAt: "2026-09-08T01:00:00.000Z",
+      deletedAt: null,
+    };
+
+    await deviceA.confirmSyncMigration(userId);
+    await deviceB.confirmSyncMigration(userId);
+    await deviceA.savePaymentMethod(method);
+    await deviceA.saveGroup(group);
+    await deviceA.saveSettings(settings);
+    await deviceA.savePayment(initialPayment);
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = new URL(
+        typeof input === "string" ? input : input instanceof Request ? input.url : input.toString(),
+        "http://localhost",
+      );
+      const request = new Request(url, init);
+      if (url.pathname === "/api/sync/push") return post(request);
+      if (url.pathname === "/api/sync/pull") return pull(request);
+      throw new Error(`unexpected sync URL: ${url.pathname}`);
+    });
+
+    try {
+      expect(await deviceA.trySync(userId)).toBe("synced");
+      expect(await deviceB.trySync(userId)).toBe("synced");
+
+      expect(await deviceB.getPayment(initialPayment.id)).toEqual(await deviceA.getPayment(initialPayment.id));
+      expect(await deviceB.getGroup(group.id)).toEqual(await deviceA.getGroup(group.id));
+      expect(await deviceB.getPaymentMethod(method.id)).toEqual(await deviceA.getPaymentMethod(method.id));
+      expect(await deviceB.getSettings()).toEqual(await deviceA.getSettings());
+      expect(await deviceA.listOutbox()).toEqual([]);
+      expect(await deviceB.listOutbox()).toEqual([]);
+
+      const newerUpdate: Payment = {
+        ...initialPayment,
+        amount: 2400,
+        updatedAt: "2026-09-08T01:02:00.000Z",
+      };
+      const olderUpdate: Payment = {
+        ...initialPayment,
+        amount: 1800,
+        updatedAt: "2026-09-08T01:01:00.000Z",
+      };
+      await deviceA.savePayment(newerUpdate);
+      await deviceB.savePayment(olderUpdate);
+      expect((await deviceB.listOutbox()).find((entry) => entry.entityId === initialPayment.id)?.type).toBe("PAYMENT_UPSERT");
+
+      expect(await deviceA.trySync(userId)).toBe("synced");
+      expect(await deviceB.trySync(userId)).toBe("synced");
+      expect(await deviceA.getPayment(initialPayment.id)).toEqual(newerUpdate);
+      expect(await deviceB.getPayment(initialPayment.id)).toEqual(newerUpdate);
+      expect(await deviceB.listOutbox()).toEqual([]);
+
+      await deviceA.removePayment(initialPayment.id);
+      const deletedPayment = await deviceA.getPayment(initialPayment.id);
+      if (!deletedPayment) throw new Error("device A delete was not stored");
+      expect((await deviceA.listOutbox()).find((entry) => entry.entityId === initialPayment.id)?.type).toBe("PAYMENT_DELETE");
+
+      const staleUpdateAfterDelete: Payment = {
+        ...newerUpdate,
+        amount: 3600,
+        updatedAt: new Date(Date.parse(deletedPayment.updatedAt) - 1000).toISOString(),
+        deletedAt: null,
+      };
+      await deviceB.savePayment(staleUpdateAfterDelete);
+
+      expect(await deviceA.trySync(userId)).toBe("synced");
+      expect(await deviceB.trySync(userId)).toBe("synced");
+      expect(await deviceA.getPayment(initialPayment.id)).toEqual(await deviceB.getPayment(initialPayment.id));
+      expect((await deviceB.getPayment(initialPayment.id))?.deletedAt).toBe(deletedPayment.deletedAt);
+      expect(await deviceA.listOutbox()).toEqual([]);
+      expect(await deviceB.listOutbox()).toEqual([]);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("synchronizes two device cursors through update and delete conflicts", async () => {
+    const initialMethod = {
+      id: "operation-two-device-method",
+      type: "PAYMENT_METHOD_UPSERT",
+      entityId: "two-device-method",
+      createdAt: timestamp,
+      payload: { id: "two-device-method", name: "2デバイス用カード", sortOrder: 0, isActive: true, createdAt: timestamp, updatedAt: timestamp, deletedAt: null },
+    };
+    const initial = {
+      id: "operation-two-device-initial",
+      type: "PAYMENT_UPSERT",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: paymentPayload("two-device-payment", "two-device-method"),
+    };
+    expect((await post(request([initialMethod, initial]))).status).toBe(200);
+
+    const deviceAPull = await pull(pullRequest());
+    const deviceBPull = await pull(pullRequest());
+    const deviceABody = (await deviceAPull.json()) as { changes: Array<{ entityId: string }>; nextCursor: string | null; hasMore: boolean };
+    const deviceBBody = (await deviceBPull.json()) as { changes: Array<{ entityId: string }>; nextCursor: string | null; hasMore: boolean };
+    expect(deviceAPull.status).toBe(200);
+    expect(deviceBPull.status).toBe(200);
+    expect(deviceABody.changes).toEqual([
+      { type: "PAYMENT_METHOD_UPSERT", entityId: "two-device-method", payload: expect.any(Object) },
+      { type: "PAYMENT_UPSERT", entityId: "two-device-payment", payload: expect.any(Object) },
+    ]);
+    expect(deviceBBody.nextCursor).toBe(deviceABody.nextCursor);
+
+    const newerUpdate = {
+      id: "operation-two-device-newer-update",
+      type: "PAYMENT_UPSERT",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: { ...paymentPayload("two-device-payment", "two-device-method"), amount: 2400, updatedAt: "2026-09-08T00:02:00.000Z" },
+    };
+    expect((await post(request([newerUpdate]))).status).toBe(200);
+
+    const olderUpdate = {
+      id: "operation-two-device-older-update",
+      type: "PAYMENT_UPSERT",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: { ...newerUpdate.payload, amount: 1800, updatedAt: "2026-09-08T00:01:00.000Z" },
+    };
+    const staleUpdateResponse = await post(request([olderUpdate]));
+    const staleUpdateBody = (await staleUpdateResponse.json()) as { changes: Array<{ type: string; entityId: string; payload: { amount: number } }> };
+    expect(staleUpdateResponse.status).toBe(200);
+    expect(staleUpdateBody.changes).toEqual([{ type: "PAYMENT_UPSERT", entityId: "two-device-payment", payload: expect.objectContaining({ amount: 2400 }) }]);
+
+    const deviceBUpdatePull = await pull(pullRequest(deviceBBody.nextCursor!));
+    const deviceBUpdateBody = (await deviceBUpdatePull.json()) as { changes: Array<{ type: string; entityId: string; payload: { amount: number } }>; nextCursor: string | null };
+    expect(deviceBUpdatePull.status).toBe(200);
+    expect(deviceBUpdateBody.changes).toEqual([{ type: "PAYMENT_UPSERT", entityId: "two-device-payment", payload: expect.objectContaining({ amount: 2400 }) }]);
+
+    const deleteOperation = {
+      id: "operation-two-device-delete",
+      type: "PAYMENT_DELETE",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: { ...newerUpdate.payload, updatedAt: "2026-09-08T00:03:00.000Z", deletedAt: "2026-09-08T00:03:00.000Z" },
+    };
+    expect((await post(request([deleteOperation]))).status).toBe(200);
+
+    const staleAfterDelete = {
+      id: "operation-two-device-stale-after-delete",
+      type: "PAYMENT_UPSERT",
+      entityId: "two-device-payment",
+      createdAt: timestamp,
+      payload: { ...newerUpdate.payload, amount: 3600, updatedAt: "2026-09-08T00:02:30.000Z", deletedAt: null },
+    };
+    const staleAfterDeleteResponse = await post(request([staleAfterDelete]));
+    const staleAfterDeleteBody = (await staleAfterDeleteResponse.json()) as { changes: Array<{ type: string; entityId: string; payload: { deletedAt: string | null } }> };
+    expect(staleAfterDeleteResponse.status).toBe(200);
+    expect(staleAfterDeleteBody.changes).toEqual([{ type: "PAYMENT_DELETE", entityId: "two-device-payment", payload: expect.objectContaining({ deletedAt: "2026-09-08T00:03:00.000Z" }) }]);
+
+    const deviceBDeletePull = await pull(pullRequest(deviceBUpdateBody.nextCursor!));
+    const deviceBDeleteBody = (await deviceBDeletePull.json()) as { changes: Array<{ type: string; entityId: string; payload: { deletedAt: string | null } }> };
+    expect(deviceBDeletePull.status).toBe(200);
+    expect(deviceBDeleteBody.changes).toEqual([{ type: "PAYMENT_DELETE", entityId: "two-device-payment", payload: expect.objectContaining({ deletedAt: "2026-09-08T00:03:00.000Z" }) }]);
   });
 
   it("keeps the newer server state when an older update arrives", async () => {

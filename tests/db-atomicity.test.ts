@@ -353,6 +353,52 @@ describe("IndexedDB entity/outbox atomicity", () => {
     expect((await listOutbox()).some((entry) => entry.entityId === local.id)).toBe(true);
   });
 
+  it("resolves delete/update conflicts by updatedAt without adding remote outbox entries", async () => {
+    const localUpdate = {
+      ...payment("delete-update-remote-delete"),
+      updatedAt: "2026-09-08T00:01:00.000Z",
+    };
+    const remoteDelete = {
+      ...localUpdate,
+      updatedAt: "2026-09-08T00:02:00.000Z",
+      deletedAt: "2026-09-08T00:02:00.000Z",
+    };
+    await savePayment(localUpdate);
+    const outboxBeforeRemoteDelete = (await listOutbox()).filter((entry) => entry.entityId === localUpdate.id);
+
+    await applyRemoteChanges([
+      { type: "PAYMENT_DELETE", entityId: localUpdate.id, payload: remoteDelete },
+    ], "delete-wins-cursor", await getSyncState());
+
+    expect(await getPayment(localUpdate.id)).toEqual(remoteDelete);
+    expect((await listOutbox()).filter((entry) => entry.entityId === localUpdate.id)).toEqual(outboxBeforeRemoteDelete);
+
+    const localDelete = {
+      ...payment("delete-update-local-delete"),
+    };
+    await savePayment(localDelete);
+    await removePayment(localDelete.id);
+    const storedLocalDelete = await getPayment(localDelete.id);
+    if (!storedLocalDelete) throw new Error("local delete was not stored");
+    const outboxBeforeRemoteUpdate = (await listOutbox()).filter((entry) => entry.entityId === localDelete.id);
+    expect(outboxBeforeRemoteUpdate.filter((entry) => entry.type === "PAYMENT_DELETE")).toEqual([
+      expect.objectContaining({ type: "PAYMENT_DELETE", entityId: localDelete.id }),
+    ]);
+    const olderRemoteUpdate = {
+      ...storedLocalDelete,
+      amount: 1,
+      updatedAt: new Date(Date.parse(storedLocalDelete.updatedAt) - 1000).toISOString(),
+      deletedAt: null,
+    };
+
+    await applyRemoteChanges([
+      { type: "PAYMENT_UPSERT", entityId: localDelete.id, payload: olderRemoteUpdate },
+    ], "update-loses-cursor", await getSyncState());
+
+    expect(await getPayment(localDelete.id)).toEqual(storedLocalDelete);
+    expect((await listOutbox()).filter((entry) => entry.entityId === localDelete.id)).toEqual(outboxBeforeRemoteUpdate);
+  });
+
   it("converges to the server state returned for a stale push", async () => {
     const local = { ...payment("stale-push"), amount: 1200, updatedAt: "2026-09-07T00:01:00.000Z" };
     const server = { ...local, amount: 2400, updatedAt: "2026-09-07T00:02:00.000Z" };
