@@ -44,7 +44,7 @@ function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
     };
     const handleOnline = () => void refresh();
     const handleOffline = () => update();
-    const unsubscribeFromOutbox = subscribeToOutboxChanges(() => void refreshPending());
+    const unsubscribeFromOutbox = subscribeToOutboxChanges(() => void refresh());
 
     void refresh();
     window.addEventListener("online", handleOnline);

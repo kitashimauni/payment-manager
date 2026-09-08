@@ -294,6 +294,28 @@ describe("IndexedDB entity/outbox atomicity", () => {
     unsubscribe();
   });
 
+  it("coalesces an outbox-triggered sync while the current sync is in flight", async () => {
+    await savePayment(payment("sync-single-flight"));
+    await confirmSyncMigration("test-user");
+    const outbox = await listOutbox();
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: outbox.map((entry) => entry.id), changes: [] }), {
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changes: [], nextCursor: null, hasMore: false }), {
+        headers: { "Content-Type": "application/json" },
+      }));
+    const trigger = vi.fn(() => void trySync("test-user"));
+    const unsubscribe = subscribeToOutboxChanges(trigger);
+
+    await expect(trySync("test-user")).resolves.toBe("synced");
+
+    expect(trigger).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fetchMock.mockRestore();
+    unsubscribe();
+  });
+
   it("applies remote changes without creating outbox entries", async () => {
     const timestamp = "2026-09-07T00:00:00.000Z";
     const remote = payment("remote-apply");

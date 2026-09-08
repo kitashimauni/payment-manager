@@ -12,7 +12,6 @@ import {
   saveSettings,
   seedDefaultData,
   subscribeToLocalDataChanges,
-  trySync,
   uuid,
 } from "@/lib/db";
 import { formatYen } from "@/lib/format";
@@ -111,7 +110,6 @@ export default function HomePage() {
     setTitle("");
     setToast({ message: `${formatYen(numericAmount)}を登録しました`, payment });
     void warmOfflineRoutes([`/payments/${payment.id}`]);
-    void trySync();
   }
 
   async function undo() {

@@ -29,11 +29,7 @@ export default function PaymentDetailPage() {
       title !== (payment.title ?? "") ||
       methodId !== payment.paymentMethodId ||
       groupId !== (payment.groupId ?? "") ||
-      (() => {
-        if (!paidAt) return true;
-        const parsed = new Date(paidAt);
-        return Number.isNaN(parsed.getTime()) || parsed.toISOString() !== payment.paidAt;
-      })()
+      paidAt !== formatDateTimeInput(payment.paidAt)
     : false;
 
   async function refresh() {
