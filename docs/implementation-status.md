@@ -11,6 +11,7 @@
 | Payment編集/削除 | 実装済み | 論理削除、金額・方法・名目・グループ・日時の編集 |
 | Group | 実装済み | 作成、詳細、合計、件数、Current Group、削除時の紐付け解除 |
 | Payment Method | 実装済み | 追加、名称変更、並び替え、アーカイブ、再表示 |
+| データExport | 実装済み | 設定画面からUTF-8 CSV / schemaVersion付きJSONをダウンロード。論理削除済みを除外し、Group・Payment Method名を含める |
 | Local First | 実装済み | IndexedDBの `payments` / `groups` / `paymentMethods` / `settings` / `outbox` / `syncState` |
 | オフライン利用 | 実装済み | Service Worker、通信状態表示、ローカル登録 |
 | Sync API | Push/Pull実装済み | 端末・アカウント確認済みの`POST /api/sync/push`でOutboxをPostgreSQLへupsertし、`GET /api/sync/pull?cursor=...`でユーザー所有の変更をサーバー採番の`sync_version`順で返す。Pull結果はOutboxを生成せずIndexedDBへ適用し、未認証・確認前・未設定時はOutboxを保持する |
@@ -28,6 +29,7 @@
 - Payment Methodは新規入力候補にはactiveのみを使い、ホームと履歴の支払い表示にはアーカイブ済みを含む一覧を使う。
 - 履歴の検索はIndexedDBから取得したローカルデータをクライアント側の純粋な絞り込み関数で処理し、論理削除済みを除外する。名目の部分一致、金額範囲、支払日範囲、グループ、支払い方法を組み合わせられ、グループなしとアーカイブ済み支払い方法も選択できる。既存のローカル/リモート変更イベントで履歴を再取得するため、検索条件を保ったまま結果も更新される。
 - 支払い集計は検索とは独立した期間（今月、前月、任意期間）でIndexedDBの現在状態から計算する。合計額、件数、平均支払額と、グループ別・支払い方法別の内訳を表示し、グループなしとアーカイブ済み支払い方法を独立した行として保持する。履歴ページがローカル/リモート変更を購読しているため、同期後も集計を再計算する。
+- Exportは設定画面でIndexedDBの現在状態から未削除Paymentのスナップショットを作り、通信せずにブラウザのダウンロードを開始する。CSVはUTF-8 BOM付きで全セルを引用し、カンマ・改行・ダブルクォートを含む名目を壊さない。JSONは`schemaVersion: 1`とID、日時、表示用のGroup・Payment Method名を含め、将来のImportで扱える構造にする。Exportは読み取りだけで、EntityやOutboxを変更しない。
 - 認証はAuth.js + Google OAuthとし、アプリ内の`users.id`はAuth.js/Drizzleが生成するUUIDとする。Googleの安定したsubject claimは`accounts`の`provider`と`provider_account_id`で保持する。認証に必要な環境変数またはPostgreSQLが揃わない場合はproviderを有効化せず、Local Onlyで利用できるようにする。
 - `users.email`は既存の同期用ユーザー行を壊さないようnullableで追加する。認証情報から正しくbackfillできる移行を定義できるまでは、推測値で埋めたり`NOT NULL`へ変更したりしない。
 - セッションはJWT方式とし、Issue #1ではOAuthアカウントリンク用の`accounts`だけを追加する。Push/Pull、所有権チェック、Outboxの初回移行は認証済み同期の別段階で実装する。
@@ -42,4 +44,4 @@
 
 ## 残りの実装単位
 
-1. CSV/JSON ExportをPhase 2として追加する。
+1. 複数Paymentの一括Group変更など、企画書のPhase 2残項目を必要に応じて追加する。
