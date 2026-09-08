@@ -375,23 +375,27 @@ describe("IndexedDB entity/outbox atomicity", () => {
 
     const localDelete = {
       ...payment("delete-update-local-delete"),
-      updatedAt: "2026-09-08T00:04:00.000Z",
-      deletedAt: "2026-09-08T00:04:00.000Z",
-    };
-    const olderRemoteUpdate = {
-      ...localDelete,
-      amount: 1,
-      updatedAt: "2026-09-08T00:03:00.000Z",
-      deletedAt: null,
     };
     await savePayment(localDelete);
+    await removePayment(localDelete.id);
+    const storedLocalDelete = await getPayment(localDelete.id);
+    if (!storedLocalDelete) throw new Error("local delete was not stored");
     const outboxBeforeRemoteUpdate = (await listOutbox()).filter((entry) => entry.entityId === localDelete.id);
+    expect(outboxBeforeRemoteUpdate.filter((entry) => entry.type === "PAYMENT_DELETE")).toEqual([
+      expect.objectContaining({ type: "PAYMENT_DELETE", entityId: localDelete.id }),
+    ]);
+    const olderRemoteUpdate = {
+      ...storedLocalDelete,
+      amount: 1,
+      updatedAt: new Date(Date.parse(storedLocalDelete.updatedAt) - 1000).toISOString(),
+      deletedAt: null,
+    };
 
     await applyRemoteChanges([
       { type: "PAYMENT_UPSERT", entityId: localDelete.id, payload: olderRemoteUpdate },
     ], "update-loses-cursor", await getSyncState());
 
-    expect(await getPayment(localDelete.id)).toEqual(localDelete);
+    expect(await getPayment(localDelete.id)).toEqual(storedLocalDelete);
     expect((await listOutbox()).filter((entry) => entry.entityId === localDelete.id)).toEqual(outboxBeforeRemoteUpdate);
   });
 

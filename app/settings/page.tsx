@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import { getSyncState, listOutbox, seedDefaultData, subscribeToLocalDataChanges, trySync } from "@/lib/db";
 import type { SyncState } from "@/lib/types";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
 
 export default function SettingsPage() {
+  const { data: session, status: sessionStatus } = useSession();
   const [pending, setPending] = useState(0);
   const [syncState, setSyncState] = useState<SyncState | null>(null);
   const [syncMessage, setSyncMessage] = useState("サーバー接続を確認中…");
+  const syncUserId = sessionStatus === "authenticated" ? session.user?.id ?? null : null;
 
   async function refresh() {
     await seedDefaultData();
@@ -23,7 +26,7 @@ export default function SettingsPage() {
   }, []);
 
   async function sync() {
-    const result = await trySync();
+    const result = await trySync(syncUserId);
     setSyncMessage(result === "synced" ? "同期が完了しました" : result === "offline" ? "オフラインのため同期待ちです" : "同期待ちとして端末に保持しています");
     await refresh();
   }
