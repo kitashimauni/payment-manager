@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { listGroups, listPaymentMethods, listPayments, seedDefaultData, subscribeToLocalDataChanges } from "@/lib/db";
+import { formatYen } from "@/lib/format";
 import type { Group, Payment, PaymentMethod } from "@/lib/types";
 import { PaymentDateHeading, PaymentList } from "@/components/payment-list";
 import {
@@ -12,12 +13,29 @@ import {
   NO_GROUP_FILTER,
   type PaymentSearchFilters,
 } from "@/lib/payment-search";
+import { formatSummaryPeriod, getMonthPeriod, summarizePayments, type PaymentSummaryRow, type SummaryPeriod } from "@/lib/payment-summary";
+
+type SummaryPeriodMode = "current" | "previous" | "custom";
+
+function SummaryBreakdown({ title, rows }: { title: string; rows: PaymentSummaryRow[] }) {
+  return (
+    <div className="summary-breakdown">
+      <div className="summary-breakdown-heading"><h3>{title}</h3><span className="helper-text">{rows.length}分類</span></div>
+      {rows.length === 0 ? <div className="summary-empty">この期間の支払いはありません。</div> : <div className="summary-list">
+        {rows.map((row) => <div className="summary-row" key={row.id}><div><strong>{row.label}</strong><span className="helper-text">{row.count}件</span></div><span>{formatYen(row.total)}</span></div>)}
+      </div>}
+    </div>
+  );
+}
 
 export default function PaymentsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [filters, setFilters] = useState<PaymentSearchFilters>(DEFAULT_PAYMENT_SEARCH_FILTERS);
+  const [summaryPeriodMode, setSummaryPeriodMode] = useState<SummaryPeriodMode>("current");
+  const [summaryReferenceDate] = useState(() => new Date());
+  const [customSummaryPeriod, setCustomSummaryPeriod] = useState<SummaryPeriod>(() => getMonthPeriod(new Date()));
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
@@ -42,8 +60,20 @@ export default function PaymentsPage() {
     setFilters(DEFAULT_PAYMENT_SEARCH_FILTERS);
   }
 
+  function updateCustomSummaryPeriod<Key extends keyof SummaryPeriod>(key: Key, value: SummaryPeriod[Key]) {
+    setCustomSummaryPeriod((current) => ({ ...current, [key]: value }));
+  }
+
   const filtered = useMemo(() => filterPayments(payments, filters), [filters, payments]);
   const hasActiveFilters = isPaymentSearchActive(filters);
+  const summaryPeriod = useMemo(() => {
+    if (summaryPeriodMode === "previous") return getMonthPeriod(summaryReferenceDate, -1);
+    if (summaryPeriodMode === "custom") return customSummaryPeriod;
+    return getMonthPeriod(summaryReferenceDate);
+  }, [customSummaryPeriod, summaryPeriodMode, summaryReferenceDate]);
+  const summary = useMemo(() => summarizePayments(payments, groups, methods, summaryPeriod), [groups, methods, payments, summaryPeriod]);
+  const hasIncompleteCustomPeriod = summaryPeriodMode === "custom" && (!summaryPeriod.fromDate || !summaryPeriod.toDate);
+  const hasReversedCustomPeriod = summaryPeriodMode === "custom" && summaryPeriod.fromDate > summaryPeriod.toDate;
 
   const grouped = useMemo(() => {
     const map = new Map<string, Payment[]>();
@@ -102,6 +132,28 @@ export default function PaymentsPage() {
           </label>
         </div>
         <div className="search-result" aria-live="polite"><span><strong>{filtered.length}</strong>件</span><span>{hasActiveFilters ? `全${payments.length}件から絞り込み中` : "すべての履歴"}</span></div>
+      </section>
+      <section className="panel summary-panel" aria-labelledby="payment-summary-heading">
+        <div className="panel-heading summary-panel-heading">
+          <div><h2 id="payment-summary-heading">支払い集計</h2><p className="helper-text summary-description">期間ごとの支出と内訳を確認できます。</p></div>
+        </div>
+        <div className="filter-bar summary-period-switcher" role="group" aria-label="集計期間">
+          {([["current", "今月"], ["previous", "前月"], ["custom", "任意期間"]] as const).map(([mode, label]) => <button key={mode} className={summaryPeriodMode === mode ? "filter-chip active" : "filter-chip"} type="button" aria-pressed={summaryPeriodMode === mode} onClick={() => setSummaryPeriodMode(mode)}>{label}</button>)}
+        </div>
+        {summaryPeriodMode === "custom" ? <div className="summary-custom-range">
+          <label className="field" htmlFor="summary-from-date"><span className="field-label">開始日</span><input id="summary-from-date" className="text-input" type="date" value={customSummaryPeriod.fromDate} onChange={(event) => updateCustomSummaryPeriod("fromDate", event.target.value)} /></label>
+          <label className="field" htmlFor="summary-to-date"><span className="field-label">終了日</span><input id="summary-to-date" className="text-input" type="date" value={customSummaryPeriod.toDate} onChange={(event) => updateCustomSummaryPeriod("toDate", event.target.value)} /></label>
+        </div> : null}
+        <p className={hasIncompleteCustomPeriod || hasReversedCustomPeriod ? "summary-period-label error-text" : "summary-period-label"}>{hasIncompleteCustomPeriod ? "開始日と終了日を入力してください。" : hasReversedCustomPeriod ? "開始日は終了日以前にしてください。" : formatSummaryPeriod(summaryPeriod)}</p>
+        <div className="summary-metrics">
+          <div className="summary-metric summary-metric-primary"><span className="summary-metric-label">合計額</span><strong>{formatYen(summary.total)}</strong></div>
+          <div className="summary-metric"><span className="summary-metric-label">支払い件数</span><strong>{summary.count}件</strong></div>
+          <div className="summary-metric"><span className="summary-metric-label">平均支払額</span><strong>{formatYen(summary.averageAmount)}</strong></div>
+        </div>
+        <div className="summary-breakdowns">
+          <SummaryBreakdown title="グループ別" rows={summary.byGroup} />
+          <SummaryBreakdown title="支払い方法別" rows={summary.byPaymentMethod} />
+        </div>
       </section>
       {loading ? <div className="loading-state">履歴を読み込んでいます…</div> : grouped.length === 0 ? <div className="panel"><div className="empty-state">この条件の支払いはありません。</div></div> : grouped.map(([date, items]) => (
         <section className="history-section" key={date}>
