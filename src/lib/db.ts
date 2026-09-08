@@ -23,12 +23,20 @@ const STORE_NAMES = [
   "syncState",
 ] as const;
 
+type SyncResult = "offline" | "pending" | "synced";
+
 type StoreName = (typeof STORE_NAMES)[number];
 type LocalEntityStoreName = Exclude<StoreName, "outbox" | "syncState">;
 
 export const OUTBOX_CHANGED_EVENT = "payment-manager:outbox-changed";
 export const SYNC_STATE_CHANGED_EVENT = "payment-manager:sync-state-changed";
 export const LOCAL_DATA_CHANGED_EVENT = "payment-manager:local-data-changed";
+
+let syncInFlight: {
+  userId: string;
+  promise: Promise<SyncResult>;
+  rerunRequested: boolean;
+} | undefined;
 
 export type LocalDataChange = {
   kind: LocalEntityStoreName;
@@ -60,7 +68,10 @@ export function subscribeToLocalDataChanges(onChange: (change: LocalDataChange) 
   return () => window.removeEventListener(LOCAL_DATA_CHANGED_EVENT, handleChange);
 }
 
-function notifyOutboxChanged() {
+function notifyOutboxChanged(source: "local" | "sync" = "local") {
+  if (source === "local" && syncInFlight) {
+    syncInFlight.rerunRequested = true;
+  }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
   }
@@ -692,8 +703,6 @@ export async function confirmSyncMigration(userId: string) {
   return next;
 }
 
-type SyncResult = "offline" | "pending" | "synced";
-
 async function performSync(syncUserId: string): Promise<SyncResult> {
   const outbox = await listOutbox();
   const syncState = await getSyncState();
@@ -715,7 +724,7 @@ async function performSync(syncUserId: string): Promise<SyncResult> {
     const store = transaction.objectStore("outbox");
     acceptedOutbox.forEach((entry) => store.delete(entry.id));
     await transactionDone(transaction);
-    notifyOutboxChanged();
+    notifyOutboxChanged("sync");
   }
 
   if (result.changes.length > 0) {
@@ -741,18 +750,28 @@ async function performSync(syncUserId: string): Promise<SyncResult> {
   return acceptedOutbox.length === outbox.length ? "synced" : "pending";
 }
 
-let syncInFlight: { userId: string; promise: Promise<SyncResult> } | undefined;
-
 export function trySync(syncUserId?: string | null): Promise<SyncResult> {
   if (typeof window === "undefined" || !navigator.onLine) return Promise.resolve("offline");
   if (!syncUserId) return Promise.resolve("pending");
   if (syncInFlight) return syncInFlight.userId === syncUserId ? syncInFlight.promise : Promise.resolve("pending");
 
-  const promise = performSync(syncUserId).catch(() => "pending" as const).finally(() => {
-    if (syncInFlight?.promise === promise) syncInFlight = undefined;
+  const flight = {
+    userId: syncUserId,
+    promise: Promise.resolve("pending" as SyncResult),
+    rerunRequested: false,
+  };
+  syncInFlight = flight;
+  flight.promise = (async () => {
+    let result: SyncResult = "pending";
+    do {
+      flight.rerunRequested = false;
+      result = await performSync(syncUserId).catch(() => "pending" as const);
+    } while (flight.rerunRequested && navigator.onLine);
+    return result;
+  })().finally(() => {
+    if (syncInFlight === flight) syncInFlight = undefined;
   });
-  syncInFlight = { userId: syncUserId, promise };
-  return promise;
+  return flight.promise;
 }
 
 export { uuid, now };
