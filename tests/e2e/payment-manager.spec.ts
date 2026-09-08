@@ -154,6 +154,13 @@ test("keeps local payment registration available offline and navigates cached PW
 
 test("flushes an offline payment after authenticated online recovery", async ({ page, context }) => {
   test.skip(!process.env.E2E_AUTH_USER_ID, "requires the CI-only E2E auth provider");
+  const syncResponses: string[] = [];
+  page.on("response", (response) => {
+    const path = new URL(response.url()).pathname;
+    if (["/api/sync/push", "/api/sync/pull"].includes(path)) {
+      syncResponses.push(`${response.status()} ${path}`);
+    }
+  });
 
   await signInForSync(page);
   await context.setOffline(true);
@@ -166,6 +173,8 @@ test("flushes an offline payment after authenticated online recovery", async ({ 
   // Playwright restores transport here but does not consistently dispatch the
   // browser event that the application uses to start recovery.
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await page.waitForTimeout(2_000);
+  console.log(`online=${await page.evaluate(() => navigator.onLine)} sync=${syncResponses.join(",")}`);
   await expect.poll(() => outboxCount(page), { timeout: 30_000 }).toBe(0);
   await page.reload();
   await expect(page.getByText("同期待ちの変更はありません", { exact: true })).toBeVisible({ timeout: 30_000 });
