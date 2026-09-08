@@ -339,6 +339,56 @@ export function savePayment(payment: Payment) {
   return saveWithOutbox("payments", "PAYMENT_UPSERT", payment);
 }
 
+export type PaymentBulkUpdate = {
+  groupId?: string | null;
+  paymentMethodId?: string;
+  delete?: boolean;
+};
+
+export type PaymentBulkUpdateResult = {
+  updated: number;
+};
+
+export function bulkUpdatePayments(paymentIds: readonly string[], update: PaymentBulkUpdate) {
+  const ids = new Set(paymentIds.filter((id) => id.trim().length > 0));
+  const hasGroupUpdate = Object.prototype.hasOwnProperty.call(update, "groupId");
+  const hasMethodUpdate = Object.prototype.hasOwnProperty.call(update, "paymentMethodId");
+  const shouldDelete = update.delete === true;
+
+  if (ids.size === 0 || (!hasGroupUpdate && !hasMethodUpdate && !shouldDelete)) return Promise.resolve({ updated: 0 });
+  if (hasMethodUpdate && (!update.paymentMethodId || update.paymentMethodId.trim().length === 0)) return Promise.reject(new Error("支払い方法を指定してください。"));
+  const changes: LocalDataChange[] = [];
+
+  return runWriteTransaction<LocalDataChange[]>(["payments", "outbox"], (transaction, complete, fail) => {
+    const request = transaction.objectStore("payments").getAll();
+    request.onsuccess = () => {
+      try {
+        const timestamp = now();
+        const selected = (request.result as Payment[]).filter((payment) => ids.has(payment.id) && !payment.deletedAt);
+        selected.forEach((payment) => {
+          const nextPayment: Payment = { ...payment, updatedAt: timestamp };
+          if (hasGroupUpdate) nextPayment.groupId = update.groupId ?? null;
+          if (hasMethodUpdate) nextPayment.paymentMethodId = update.paymentMethodId as string;
+          if (shouldDelete) nextPayment.deletedAt = timestamp;
+          transaction.objectStore("payments").put(nextPayment);
+          addOutboxOperation(transaction, shouldDelete ? "PAYMENT_DELETE" : "PAYMENT_UPSERT", nextPayment.id, nextPayment);
+          changes.push({ kind: "payments", entityId: nextPayment.id, source: "local" });
+        });
+        complete(changes);
+      } catch (cause) {
+        fail(cause);
+      }
+    };
+    request.onerror = () => fail(request.error ?? new Error("Payment lookup failed"));
+  }).then((localChanges) => {
+    if (localChanges.length > 0) {
+      notifyOutboxChanged();
+      localChanges.forEach(notifyLocalDataChanged);
+    }
+    return { updated: localChanges.length };
+  });
+}
+
 export function removePayment(id: string) {
   return runWriteTransaction(["payments", "outbox"], (transaction, complete, fail) => {
     const request = transaction.objectStore("payments").get(id);

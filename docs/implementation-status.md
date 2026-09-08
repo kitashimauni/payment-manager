@@ -7,7 +7,7 @@
 | 領域 | 状況 | 実装 |
 | --- | --- | --- |
 | Payment登録 | 実装済み | 金額、支払い方法、任意の名目、現在時刻、Current Group |
-| Payment履歴 | 実装済み | 日付ごとの時系列表示、名目・金額・期間・グループ・支払い方法の複合フィルタ、今月・前月・任意期間の集計 |
+| Payment履歴 | 実装済み | 日付ごとの時系列表示、名目・金額・期間・グループ・支払い方法の複合フィルタ、今月・前月・任意期間の集計、表示中Paymentの一括更新・論理削除 |
 | Payment編集/削除 | 実装済み | 論理削除、金額・方法・名目・グループ・日時の編集 |
 | Group | 実装済み | 作成、詳細、合計、件数、Current Group、削除時の紐付け解除 |
 | Payment Method | 実装済み | 追加、名称変更、並び替え、アーカイブ、再表示 |
@@ -39,6 +39,7 @@
 - Pushはリレーションの順序を保つためGroup、Payment Method、Payment、Settingsの順に処理し、既存のLocal First初期Payment Methodはサーバー側で必要時に作成する。
 - 同期対象にはサーバー採番の`sync_version`を付与し、同一ユーザーのPush transactionではtransaction advisory lockを取得して採番順とcommit順を一致させる。Pullはrepeatable readのsnapshotから`sync_version`をopaque cursorとして安定した順序を作る。クライアント由来の`updatedAt`はLWW判定用に残し、cursorの進行には使わない。論理削除も変更として返す。Pull結果はIndexedDBの同一readwrite transactionで各Entityへ適用し、remote applyではOutboxを生成しない。`updatedAt`の新しい変更を優先し、同値では保留中Outboxを持つローカル変更を優先する。Push側にも同じ時刻比較を置き、サーバーの新しい状態を古い更新で上書きしない。Pushで古い更新を無視した場合は現在のサーバーEntityをレスポンスへ返し、cursorを進めずにremote applyしてクライアントを収束させる。
 - Entityの更新と対応するOutbox追加は同じIndexedDB readwrite transactionで実行し、Group削除時の関連更新も一括でコミットする。
+- 履歴の一括操作は現在の検索結果に含まれるPaymentだけを対象とし、選択状態を明示する。Group変更、Payment Method変更、論理削除の各Payment更新とOutbox追加を一つのIndexedDB readwrite transactionで行い、更新日時は操作単位で揃える。
 - サーバー側のIDはクライアント生成値をそのまま保持し、ユーザーごとの複合主キーで初期決済手段IDの衝突を防ぐ。
 - Paymentの支払い方法・Group参照はユーザーIDを含む複合外部キーにし、ユーザーをまたぐ参照をDBでも拒否する。
 - PWAは192px/512pxのアイコンをマニフェストへ登録し、主要ナビゲーションとNext.jsの静的アセットをService Workerでキャッシュする。Payment/Groupの詳細リンクは表示領域の近くに入った時点で詳細HTMLと参照アセットを順次ウォームし、登録直後のウォームは入力完了を待たずにバックグラウンドで実行する。オフラインの詳細リンクはドキュメント遷移で開く。ナビゲーション、RSC、API、その他のアセットは用途別にオフライン応答を分離し、未キャッシュの動的URLへホームHTMLを誤返却しない。
@@ -46,4 +47,4 @@
 
 ## 残りの実装単位
 
-1. 複数Paymentの一括Group変更など、企画書のPhase 2残項目を必要に応じて追加する。
+1. Playwrightによる主要ブラウザE2E、READMEのリリース手順整理、v0.1.0リリース準備を行う。
