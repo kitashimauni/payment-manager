@@ -279,7 +279,7 @@ describe("IndexedDB entity/outbox atomicity", () => {
     const listener = vi.fn();
     const unsubscribe = subscribeToOutboxChanges(listener);
     const fetchMock = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: outbox.map((entry) => entry.id) }), {
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accepted: outbox.map((entry) => entry.id), changes: [] }), {
         headers: { "Content-Type": "application/json" },
       }))
       .mockResolvedValue(new Response(JSON.stringify({ changes: [], nextCursor: null, hasMore: false }), {
@@ -310,7 +310,7 @@ describe("IndexedDB entity/outbox atomicity", () => {
     expect(await getPayment(remote.id)).toEqual(remoteChange.payload);
     expect((await listOutbox()).some((entry) => entry.entityId === remote.id)).toBe(false);
     expect(await getSyncState()).toMatchObject({ cursor: "remote-cursor", lastSyncedAt: expect.any(String) });
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({ kind: "payments", entityId: remote.id, source: "remote" });
     unsubscribe();
   });
 
@@ -329,6 +329,28 @@ describe("IndexedDB entity/outbox atomicity", () => {
 
     expect(await getPayment(local.id)).toEqual(local);
     expect((await listOutbox()).some((entry) => entry.entityId === local.id)).toBe(true);
+  });
+
+  it("converges to the server state returned for a stale push", async () => {
+    const local = { ...payment("stale-push"), amount: 1200, updatedAt: "2026-09-07T00:01:00.000Z" };
+    const server = { ...local, amount: 2400, updatedAt: "2026-09-07T00:02:00.000Z" };
+    await savePayment(local);
+    await confirmSyncMigration("test-user");
+    const outbox = await listOutbox();
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        accepted: outbox.map((entry) => entry.id),
+        changes: [{ type: "PAYMENT_UPSERT", entityId: server.id, payload: server }],
+      }), { headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changes: [], nextCursor: null, hasMore: false }), {
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    await expect(trySync("test-user")).resolves.toBe("synced");
+
+    expect(await getPayment(server.id)).toEqual(server);
+    expect(await listOutbox()).toEqual([]);
+    fetchMock.mockRestore();
   });
 
   it("stops pushing when the authenticated account differs from the sync owner", async () => {

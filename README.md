@@ -45,7 +45,7 @@ mise exec -- node -e "console.log(require('node:crypto').randomBytes(32).toStrin
 
 ## 同期について
 
-`/api/sync/push` は、端末とアカウントの紐付けを確認した認証済みユーザーのOutboxをPostgreSQLへ一方向同期します。未ログイン、確認前、認証設定未完了、またはサーバー未設定の場合はエラーまたは送信停止となり、クライアントはOutboxを保持します。Pushでは `users` / `groups` / `payment_methods` / `payments` / `user_settings` をサーバー側の`user_id`でupsertします。
+`/api/sync/push` は、端末とアカウントの紐付けを確認した認証済みユーザーのOutboxをPostgreSQLへ一方向同期します。未ログイン、確認前、認証設定未完了、またはサーバー未設定の場合はエラーまたは送信停止となり、クライアントはOutboxを保持します。Pushでは `users` / `groups` / `payment_methods` / `payments` / `user_settings` をサーバー側の`user_id`でupsertします。古い更新をサーバー側で無視した場合は、現在のサーバーEntityをレスポンスにも含めてクライアントを収束させます。
 
 `/api/sync/pull?cursor=...` は、同じ認証済みユーザーの変更をサーバー採番の `sync_version` 順で返します。cursorはopaqueなページング値で、論理削除も変更として含まれます。`updatedAt` はクライアント間のLWW判定用に保持し、cursorの進行には使用しません。クライアントはPull結果をIndexedDBへremote applyし、Outboxを生成せずに画面へ反映します。ローカルより新しい変更を優先し、保留中のローカル変更がある場合は古いリモート変更を保持します。Push側でもサーバーの新しい状態を古い更新で上書きしません。
 

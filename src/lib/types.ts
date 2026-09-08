@@ -66,6 +66,11 @@ export type SyncPullResponse = {
   hasMore: boolean;
 };
 
+export type SyncPushResponse = {
+  accepted: string[];
+  changes: SyncChange[];
+};
+
 export type SyncState = {
   id: "default";
   cursor: string | null;

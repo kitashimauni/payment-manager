@@ -6,7 +6,7 @@ import {
   isAfterCursor,
   type SyncPosition,
 } from "@/server/sync/pull";
-import { parseSyncPullResponse } from "@/lib/sync";
+import { parseSyncPullResponse, parseSyncPushResponse } from "@/lib/sync";
 
 const position = (kind: SyncPosition["kind"], id: string, syncVersion = BigInt(1)): SyncPosition => ({
   kind,
@@ -68,5 +68,27 @@ describe("sync pull cursor", () => {
 
     expect(response.changes[0].type).toBe("PAYMENT_DELETE");
     expect(() => parseSyncPullResponse({ changes: [], nextCursor: null, hasMore: "false" })).toThrow("hasMore");
+  });
+
+  it("validates authoritative changes in a push response", () => {
+    const response = parseSyncPushResponse({
+      accepted: ["operation-1"],
+      changes: [{
+        type: "GROUP_UPSERT",
+        entityId: "group-1",
+        payload: {
+          id: "group-1",
+          name: "仕事",
+          status: "active",
+          createdAt: "2026-09-07T00:00:00.000Z",
+          updatedAt: "2026-09-07T00:01:00.000Z",
+          deletedAt: null,
+        },
+      }],
+    });
+
+    expect(response.accepted).toEqual(["operation-1"]);
+    expect(response.changes[0].entityId).toBe("group-1");
+    expect(() => parseSyncPushResponse({ accepted: ["operation-1"], changes: [] })).not.toThrow();
   });
 });

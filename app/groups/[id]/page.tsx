@@ -1,8 +1,8 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { getGroup, getSettings, listPaymentMethods, listPayments, now, removeGroup, saveGroup, saveSettings, seedDefaultData, subscribeToLocalDataChanges } from "@/lib/db";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getGroup, getSettings, listPaymentMethods, listPayments, now, removeGroup, saveGroup, saveSettings, seedDefaultData, subscribeToLocalDataChanges, type LocalDataChange } from "@/lib/db";
 import { formatYen } from "@/lib/format";
 import type { Group, Payment, PaymentMethod, UserSettings } from "@/lib/types";
 import { PaymentList } from "@/components/payment-list";
@@ -20,6 +20,9 @@ export default function GroupDetailPage() {
   const [groupName, setGroupName] = useState("");
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
+  const groupNameDirtyRef = useRef(false);
+
+  groupNameDirtyRef.current = group ? groupName !== group.name : false;
 
   async function refresh() {
     await seedDefaultData();
@@ -32,10 +35,30 @@ export default function GroupDetailPage() {
     setLoading(false);
   }
 
+  async function refreshSupportingData() {
+    await seedDefaultData();
+    const [nextPayments, nextMethods, nextSettings] = await Promise.all([listPayments(), listPaymentMethods(true), getSettings()]);
+    setPayments(nextPayments.filter((payment) => payment.groupId === params.id));
+    setMethods(nextMethods);
+    setSettings(nextSettings ?? null);
+  }
+
   useEffect(() => {
     void warmOfflineRoutes([`/groups/${params.id}`]);
     void refresh();
-    return subscribeToLocalDataChanges(() => void refresh());
+    return subscribeToLocalDataChanges((change: LocalDataChange) => {
+      if (change.kind === "groups" && change.entityId === params.id) {
+        if (change.source === "remote" && groupNameDirtyRef.current) {
+          setToast("サーバー側でこのグループが変更されました。入力内容を確認して保存してください。");
+          return;
+        }
+        void refresh();
+        return;
+      }
+      if (change.kind === "payments" || change.kind === "paymentMethods" || change.kind === "settings") {
+        void refreshSupportingData();
+      }
+    });
   }, [params.id]);
 
   const total = useMemo(() => payments.reduce((sum, payment) => sum + payment.amount, 0), [payments]);

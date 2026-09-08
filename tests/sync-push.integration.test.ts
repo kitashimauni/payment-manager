@@ -103,10 +103,11 @@ integrationDescribe("authenticated sync push", () => {
     ];
 
     const response = await post(request(operations));
-    const body = (await response.json()) as { accepted: string[] };
+    const body = (await response.json()) as { accepted: string[]; changes: unknown[] };
 
     expect(response.status).toBe(200);
     expect(body.accepted).toEqual(operations.map((operation) => operation.id));
+    expect(body.changes).toEqual([]);
 
     const [payment] = await database
       .select()
@@ -149,7 +150,12 @@ integrationDescribe("authenticated sync push", () => {
     };
 
     expect((await post(request([newer]))).status).toBe(200);
-    expect((await post(request([older]))).status).toBe(200);
+    const staleResponse = await post(request([older]));
+    expect(staleResponse.status).toBe(200);
+    expect(await staleResponse.json()).toMatchObject({
+      accepted: ["operation-lww-older"],
+      changes: [{ type: "GROUP_UPSERT", entityId: "lww-group", payload: { name: "新しい更新" } }],
+    });
 
     const [stored] = await database
       .select()

@@ -19,6 +19,7 @@ import {
   type PushOperation,
   type SettingsPushPayload,
 } from "@/server/sync/push";
+import type { PullChange } from "@/server/sync/pull";
 
 class PushRejectedError extends Error {
   constructor(message: string) {
@@ -33,6 +34,68 @@ function date(value: string) {
 
 function nextSyncVersion() {
   return sql`nextval('sync_change_version_seq')`;
+}
+
+function groupChange(row: typeof groups.$inferSelect): PullChange {
+  return {
+    type: row.deletedAt ? "GROUP_DELETE" : "GROUP_UPSERT",
+    entityId: row.id,
+    payload: {
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+      deletedAt: row.deletedAt?.toISOString() ?? null,
+    },
+  };
+}
+
+function paymentMethodChange(row: typeof paymentMethods.$inferSelect): PullChange {
+  return {
+    type: "PAYMENT_METHOD_UPSERT",
+    entityId: row.id,
+    payload: {
+      id: row.id,
+      name: row.name,
+      sortOrder: row.sortOrder,
+      isActive: row.isActive,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+      deletedAt: row.deletedAt?.toISOString() ?? null,
+    },
+  };
+}
+
+function paymentChange(row: typeof payments.$inferSelect): PullChange {
+  return {
+    type: row.deletedAt ? "PAYMENT_DELETE" : "PAYMENT_UPSERT",
+    entityId: row.id,
+    payload: {
+      id: row.id,
+      amount: row.amount,
+      paymentMethodId: row.paymentMethodId,
+      title: row.title,
+      groupId: row.groupId,
+      paidAt: row.paidAt.toISOString(),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+      deletedAt: row.deletedAt?.toISOString() ?? null,
+    },
+  };
+}
+
+function settingsChange(row: typeof userSettings.$inferSelect): PullChange {
+  return {
+    type: "SETTINGS_UPSERT",
+    entityId: "local",
+    payload: {
+      id: "local",
+      currentGroupId: row.currentGroupId,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    },
+  };
 }
 
 function orderedOperations(operations: PushOperation[]) {
@@ -81,6 +144,8 @@ export async function POST(request: Request) {
     const message = error instanceof PushValidationError ? error.message : "request body must be valid JSON";
     return NextResponse.json({ accepted: [], error: "invalid-payload", message }, { status: 400 });
   }
+
+  const staleChanges: PullChange[] = [];
 
   try {
     await database.transaction(async (transaction) => {
@@ -140,7 +205,7 @@ export async function POST(request: Request) {
       };
 
       const saveGroup = async (payload: GroupPushPayload) => {
-        await transaction
+        const saved = await transaction
           .insert(groups)
           .values({
             id: payload.id,
@@ -161,11 +226,21 @@ export async function POST(request: Request) {
               deletedAt: payload.deletedAt === null ? null : date(payload.deletedAt),
               syncVersion: nextSyncVersion(),
             },
-          });
+          })
+          .returning({ id: groups.id });
+        if (saved.length === 0) {
+          const [current] = await transaction
+            .select()
+            .from(groups)
+            .where(and(eq(groups.userId, userId), eq(groups.id, payload.id)))
+            .limit(1);
+          if (!current) throw new Error("group conflict row disappeared");
+          staleChanges.push(groupChange(current));
+        }
       };
 
       const savePaymentMethod = async (payload: PaymentMethodPushPayload) => {
-        await transaction
+        const saved = await transaction
           .insert(paymentMethods)
           .values({
             id: payload.id,
@@ -188,14 +263,24 @@ export async function POST(request: Request) {
               deletedAt: payload.deletedAt === null ? null : date(payload.deletedAt),
               syncVersion: nextSyncVersion(),
             },
-          });
+          })
+          .returning({ id: paymentMethods.id });
+        if (saved.length === 0) {
+          const [current] = await transaction
+            .select()
+            .from(paymentMethods)
+            .where(and(eq(paymentMethods.userId, userId), eq(paymentMethods.id, payload.id)))
+            .limit(1);
+          if (!current) throw new Error("payment method conflict row disappeared");
+          staleChanges.push(paymentMethodChange(current));
+        }
       };
 
       const savePayment = async (payload: PaymentPushPayload) => {
         await assertPaymentMethodOwned(payload.paymentMethodId);
         if (payload.groupId !== null) await assertGroupOwned(payload.groupId);
 
-        await transaction
+        const saved = await transaction
           .insert(payments)
           .values({
             id: payload.id,
@@ -222,13 +307,23 @@ export async function POST(request: Request) {
               deletedAt: payload.deletedAt === null ? null : date(payload.deletedAt),
               syncVersion: nextSyncVersion(),
             },
-          });
+          })
+          .returning({ id: payments.id });
+        if (saved.length === 0) {
+          const [current] = await transaction
+            .select()
+            .from(payments)
+            .where(and(eq(payments.userId, userId), eq(payments.id, payload.id)))
+            .limit(1);
+          if (!current) throw new Error("payment conflict row disappeared");
+          staleChanges.push(paymentChange(current));
+        }
       };
 
       const saveSettings = async (payload: SettingsPushPayload) => {
         if (payload.currentGroupId !== null) await assertGroupOwned(payload.currentGroupId);
 
-        await transaction
+        const saved = await transaction
           .insert(userSettings)
           .values({
             userId,
@@ -246,7 +341,17 @@ export async function POST(request: Request) {
               deletedAt: null,
               syncVersion: nextSyncVersion(),
             },
-          });
+          })
+          .returning({ userId: userSettings.userId });
+        if (saved.length === 0) {
+          const [current] = await transaction
+            .select()
+            .from(userSettings)
+            .where(eq(userSettings.userId, userId))
+            .limit(1);
+          if (!current) throw new Error("settings conflict row disappeared");
+          staleChanges.push(settingsChange(current));
+        }
       };
 
       for (const operation of orderedOperations(parsed.operations)) {
@@ -277,6 +382,6 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     accepted: parsed.operations.map((operation) => operation.id),
-    changes: [],
+    changes: staleChanges,
   });
 }

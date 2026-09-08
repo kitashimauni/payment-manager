@@ -1,9 +1,9 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { formatDateTimeInput } from "@/lib/format";
-import { getPayment, listGroups, listPaymentMethods, now, removePayment, savePayment, seedDefaultData, subscribeToLocalDataChanges } from "@/lib/db";
+import { getPayment, listGroups, listPaymentMethods, now, removePayment, savePayment, seedDefaultData, subscribeToLocalDataChanges, type LocalDataChange } from "@/lib/db";
 import type { Group, Payment, PaymentMethod } from "@/lib/types";
 import { Toast } from "@/components/toast";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
@@ -22,6 +22,19 @@ export default function PaymentDetailPage() {
   const [paidAt, setPaidAt] = useState("");
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
+  const formDirtyRef = useRef(false);
+
+  formDirtyRef.current = payment
+    ? Number(amount) !== payment.amount ||
+      title !== (payment.title ?? "") ||
+      methodId !== payment.paymentMethodId ||
+      groupId !== (payment.groupId ?? "") ||
+      (() => {
+        if (!paidAt) return true;
+        const parsed = new Date(paidAt);
+        return Number.isNaN(parsed.getTime()) || parsed.toISOString() !== payment.paidAt;
+      })()
+    : false;
 
   async function refresh() {
     await seedDefaultData();
@@ -41,10 +54,30 @@ export default function PaymentDetailPage() {
     setLoading(false);
   }
 
+  async function refreshReferences() {
+    await seedDefaultData();
+    const [nextMethods, nextGroups] = await Promise.all([listPaymentMethods(true), listGroups()]);
+    setMethods(nextMethods);
+    setGroups(nextGroups);
+  }
+
   useEffect(() => {
     void warmOfflineRoutes([`/payments/${params.id}`]);
     void refresh();
-    return subscribeToLocalDataChanges(() => void refresh());
+    return subscribeToLocalDataChanges((change: LocalDataChange) => {
+      if (change.kind === "payments") {
+        if (change.entityId !== params.id) return;
+        if (change.source === "remote" && formDirtyRef.current) {
+          setToast("サーバー側でこの支払いが変更されました。入力内容を確認して保存してください。");
+          return;
+        }
+        void refresh();
+        return;
+      }
+      if (change.kind === "groups" || change.kind === "paymentMethods") {
+        void refreshReferences();
+      }
+    });
   }, [params.id]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {

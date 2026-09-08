@@ -9,7 +9,7 @@ import type {
   UserSettings,
 } from "./types";
 import { defaultPaymentMethods } from "./default-payment-methods";
-import { parseSyncPullResponse } from "./sync";
+import { parseSyncPullResponse, parseSyncPushResponse } from "./sync";
 
 const DB_NAME = "payment-manager-local";
 const DB_VERSION = 1;
@@ -23,10 +23,17 @@ const STORE_NAMES = [
 ] as const;
 
 type StoreName = (typeof STORE_NAMES)[number];
+type LocalEntityStoreName = Exclude<StoreName, "outbox" | "syncState">;
 
 export const OUTBOX_CHANGED_EVENT = "payment-manager:outbox-changed";
 export const SYNC_STATE_CHANGED_EVENT = "payment-manager:sync-state-changed";
 export const LOCAL_DATA_CHANGED_EVENT = "payment-manager:local-data-changed";
+
+export type LocalDataChange = {
+  kind: LocalEntityStoreName;
+  entityId: string;
+  source: "local" | "remote";
+};
 
 export function subscribeToOutboxChanges(onChange: () => void) {
   if (typeof window === "undefined") return () => undefined;
@@ -44,10 +51,10 @@ export function subscribeToSyncStateChanges(onChange: () => void) {
   return () => window.removeEventListener(SYNC_STATE_CHANGED_EVENT, handleChange);
 }
 
-export function subscribeToLocalDataChanges(onChange: () => void) {
+export function subscribeToLocalDataChanges(onChange: (change: LocalDataChange) => void) {
   if (typeof window === "undefined") return () => undefined;
 
-  const handleChange = () => onChange();
+  const handleChange = (event: Event) => onChange((event as CustomEvent<LocalDataChange>).detail);
   window.addEventListener(LOCAL_DATA_CHANGED_EVENT, handleChange);
   return () => window.removeEventListener(LOCAL_DATA_CHANGED_EVENT, handleChange);
 }
@@ -64,9 +71,9 @@ function notifySyncStateChanged() {
   }
 }
 
-function notifyLocalDataChanged() {
+function notifyLocalDataChanged(change: LocalDataChange) {
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new Event(LOCAL_DATA_CHANGED_EVENT));
+    window.dispatchEvent(new CustomEvent<LocalDataChange>(LOCAL_DATA_CHANGED_EVENT, { detail: change }));
   }
 }
 
@@ -211,14 +218,14 @@ function addOutboxOperation(transaction: IDBTransaction, type: OutboxOperationTy
   });
 }
 
-function saveWithOutbox<T extends { id: string }>(storeName: StoreName, type: OutboxOperationType, value: T) {
+function saveWithOutbox<T extends { id: string }>(storeName: LocalEntityStoreName, type: OutboxOperationType, value: T) {
   return runWriteTransaction([storeName, "outbox"], (transaction, complete) => {
     transaction.objectStore(storeName).put(value);
     addOutboxOperation(transaction, type, value.id, value);
     complete(value);
   }).then((saved) => {
     notifyOutboxChanged();
-    notifyLocalDataChanged();
+    notifyLocalDataChanged({ kind: storeName, entityId: value.id, source: "local" });
     return saved;
   });
 }
@@ -288,7 +295,7 @@ export function removePayment(id: string) {
     request.onerror = () => fail(request.error ?? new Error("Payment lookup failed"));
   }).then((removed) => {
     notifyOutboxChanged();
-    notifyLocalDataChanged();
+    notifyLocalDataChanged({ kind: "payments", entityId: id, source: "local" });
     return removed;
   });
 }
@@ -307,13 +314,14 @@ export function saveGroup(group: Group) {
 }
 
 export function removeGroup(id: string) {
-  return runWriteTransaction(["groups", "payments", "settings", "outbox"], (transaction, complete, fail) => {
+  return runWriteTransaction<LocalDataChange[]>(["groups", "payments", "settings", "outbox"], (transaction, complete, fail) => {
     const groupRequest = transaction.objectStore("groups").get(id);
     const paymentsRequest = transaction.objectStore("payments").getAll();
     const settingsRequest = transaction.objectStore("settings").get("local");
     let group: Group | undefined;
     let payments: Payment[] = [];
     let settings: UserSettings | undefined;
+    const changes: LocalDataChange[] = [];
     let pendingRequests = 3;
 
     const finishRead = () => {
@@ -322,7 +330,7 @@ export function removeGroup(id: string) {
 
       try {
         if (!group) {
-          complete(undefined);
+          complete([]);
           return;
         }
 
@@ -333,18 +341,21 @@ export function removeGroup(id: string) {
             const ungrouped = { ...payment, groupId: null, updatedAt: timestamp };
             transaction.objectStore("payments").put(ungrouped);
             addOutboxOperation(transaction, "PAYMENT_UPSERT", payment.id, ungrouped);
+            changes.push({ kind: "payments", entityId: payment.id, source: "local" });
           });
 
         const deleted = { ...group, status: "archived" as const, deletedAt: timestamp, updatedAt: timestamp };
         transaction.objectStore("groups").put(deleted);
         addOutboxOperation(transaction, "GROUP_DELETE", id, deleted);
+        changes.push({ kind: "groups", entityId: id, source: "local" });
 
         if (settings?.currentGroupId === id) {
           const updatedSettings = { ...settings, currentGroupId: null, updatedAt: timestamp };
           transaction.objectStore("settings").put(updatedSettings);
           addOutboxOperation(transaction, "SETTINGS_UPSERT", updatedSettings.id, updatedSettings);
+          changes.push({ kind: "settings", entityId: updatedSettings.id, source: "local" });
         }
-        complete(undefined);
+        complete(changes);
       } catch (cause) {
         fail(cause);
       }
@@ -365,10 +376,10 @@ export function removeGroup(id: string) {
       finishRead();
     };
     settingsRequest.onerror = () => fail(settingsRequest.error ?? new Error("Settings lookup failed"));
-  }).then((removed) => {
+  }).then((changes) => {
     notifyOutboxChanged();
-    notifyLocalDataChanged();
-    return removed;
+    changes.forEach(notifyLocalDataChanged);
+    return undefined;
   });
 }
 
@@ -442,7 +453,7 @@ function outboxEntityKey(entry: OutboxEntry) {
   }
 }
 
-function remoteEntity(change: SyncChange): { storeName: StoreName; value: LocalSyncEntity } {
+function remoteEntity(change: SyncChange): { storeName: LocalEntityStoreName; value: LocalSyncEntity } {
   switch (change.type) {
     case "GROUP_UPSERT":
     case "GROUP_DELETE":
@@ -468,7 +479,7 @@ function shouldApplyRemote(local: LocalSyncEntity | undefined, remote: LocalSync
 }
 
 export function applyRemoteChanges(changes: SyncChange[], nextCursor: string | null, baseSyncState: SyncState) {
-  return runWriteTransaction<number>(
+  return runWriteTransaction<LocalDataChange[]>(
     ["payments", "groups", "paymentMethods", "settings", "outbox", "syncState"],
     (transaction, complete, fail) => {
       let pendingReads = 6;
@@ -490,7 +501,8 @@ export function applyRemoteChanges(changes: SyncChange[], nextCursor: string | n
           payments.forEach((value) => localByKey.set(`payment:${value.id}`, value));
           settings.forEach((value) => localByKey.set("settings:local", value));
           const pendingKeys = new Set(outbox.map(outboxEntityKey));
-          let applied = 0;
+          const applied: LocalDataChange[] = [];
+          const appliedKeys = new Set<string>();
 
           for (const change of changes) {
             const remote = remoteEntity(change);
@@ -499,7 +511,11 @@ export function applyRemoteChanges(changes: SyncChange[], nextCursor: string | n
             }
             transaction.objectStore(remote.storeName).put(remote.value);
             localByKey.set(changeEntityKey(change), remote.value);
-            applied += 1;
+            const key = changeEntityKey(change);
+            if (!appliedKeys.has(key)) {
+              applied.push({ kind: remote.storeName, entityId: change.entityId, source: "remote" });
+              appliedKeys.add(key);
+            }
           }
 
           transaction.objectStore("syncState").put({
@@ -537,9 +553,9 @@ export function applyRemoteChanges(changes: SyncChange[], nextCursor: string | n
       syncStateRequest.onerror = () => fail(syncStateRequest.error ?? new Error("Sync state lookup failed"));
     },
   ).then((applied) => {
-    if (applied > 0) notifyLocalDataChanged();
+    applied.forEach(notifyLocalDataChanged);
     notifySyncStateChanged();
-    return applied;
+    return applied.length;
   });
 }
 
@@ -575,10 +591,8 @@ async function performSync(syncUserId: string): Promise<SyncResult> {
   });
   if (!response.ok) return "pending";
 
-  const result = (await response.json()) as { accepted?: unknown };
-  const accepted = new Set(
-    Array.isArray(result.accepted) ? result.accepted.filter((value): value is string => typeof value === "string") : [],
-  );
+  const result = parseSyncPushResponse(await response.json());
+  const accepted = new Set(result.accepted);
   const acceptedOutbox = outbox.filter((entry) => accepted.has(entry.id));
   if (acceptedOutbox.length > 0) {
     const db = await database();
@@ -587,6 +601,10 @@ async function performSync(syncUserId: string): Promise<SyncResult> {
     acceptedOutbox.forEach((entry) => store.delete(entry.id));
     await transactionDone(transaction);
     notifyOutboxChanged();
+  }
+
+  if (result.changes.length > 0) {
+    await applyRemoteChanges(result.changes, syncState.cursor, syncState);
   }
 
   let cursor = syncState.cursor;

@@ -1,4 +1,4 @@
-import type { SyncChange, SyncPullResponse } from "./types";
+import type { SyncChange, SyncPullResponse, SyncPushResponse } from "./types";
 
 export class SyncResponseValidationError extends Error {
   constructor(message: string) {
@@ -156,9 +156,13 @@ function parseChange(value: unknown): SyncChange {
   }
 }
 
+function parseChanges(value: unknown): SyncChange[] {
+  if (!Array.isArray(value)) throw new SyncResponseValidationError("changes must be an array");
+  return value.map(parseChange);
+}
+
 export function parseSyncPullResponse(value: unknown): SyncPullResponse {
   const body = record(value, "sync pull response");
-  if (!Array.isArray(body.changes)) throw new SyncResponseValidationError("changes must be an array");
   if (body.nextCursor !== null && typeof body.nextCursor !== "string") {
     throw new SyncResponseValidationError("nextCursor must be a string or null");
   }
@@ -167,8 +171,18 @@ export function parseSyncPullResponse(value: unknown): SyncPullResponse {
   }
   if (typeof body.hasMore !== "boolean") throw new SyncResponseValidationError("hasMore must be a boolean");
   return {
-    changes: body.changes.map(parseChange),
+    changes: parseChanges(body.changes),
     nextCursor: body.nextCursor,
     hasMore: body.hasMore,
+  };
+}
+
+export function parseSyncPushResponse(value: unknown): SyncPushResponse {
+  const body = record(value, "sync push response");
+  if (!Array.isArray(body.accepted)) throw new SyncResponseValidationError("accepted must be an array");
+  const accepted = body.accepted.map((entry, index) => stringValue(entry, `accepted[${index}]`));
+  return {
+    accepted,
+    changes: parseChanges(body.changes),
   };
 }
