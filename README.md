@@ -101,6 +101,6 @@ mise exec -- pnpm exec playwright install chromium
 mise exec -- pnpm test:e2e
 ```
 
-CIではPostgreSQLマイグレーション、型検査、Vitest（統合テストを含む）、本番ビルド、ChromiumのPlaywright E2Eをすべて実行します。Playwrightの同期E2EだけはCI専用Credentials providerでテストユーザーを発行し、認証済みのPush/Pullを実際のPostgreSQLに対して検証します。GitHubの既定ブランチは現在 `codex-init-project` です。機能ブランチのPRは、依存するPRをbaseにしてstackし、下位PRから順番にマージします。#26→#27→#28→#29の順でマージ後、必要に応じて既定ブランチを変更します。
+CIではPostgreSQLマイグレーション、型検査、Vitest（統合テストを含む）、本番ビルド、ChromiumのPlaywright E2Eをすべて実行します。Playwrightの同期E2EだけはCI専用Credentials providerでテストユーザーを発行し、認証済みのPush/Pullを実際のPostgreSQLに対して検証します。開発の基準ブランチは `main` とし、機能ブランチのPRは原則 `main` をbaseにします。依存する変更をstackする場合は下位PRから順番にマージします。
 
 現在のアプリバージョンは `0.1.0` です。v0.1.0ではLocal First、Google OAuthを設定した同期、JSONバックアップ、主要画面のブラウザE2Eをリリース確認範囲とし、本番インフラ構築と実Googleアカウントでの運用検証はリリース後の作業とします。
