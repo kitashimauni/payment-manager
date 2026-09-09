@@ -16,7 +16,7 @@ const navigation = [
 ];
 
 function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
-  const [online, setOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
+  const [online, setOnline] = useState(false);
   const [pending, setPending] = useState(0);
 
   useEffect(() => {
@@ -32,27 +32,38 @@ function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
         if (active) setPending(0);
       }
     };
-    const refresh = async () => {
+    const refresh = async (retryInFlight = false) => {
       update();
       await refreshPending();
       try {
-        await trySync(syncUserId);
+        await trySync(syncUserId, { retryInFlight });
       } catch {
         // Keep the locally calculated count when sync cannot be attempted.
       }
       await refreshPending();
     };
-    const handleOnline = () => void refresh();
+    const handleOnline = () => void refresh(true);
+    let onlineRetryTimer: number | undefined;
+    const retryOnlineSync = () => {
+      window.clearTimeout(onlineRetryTimer);
+      onlineRetryTimer = window.setTimeout(() => {
+        onlineRetryTimer = undefined;
+        void refresh(true);
+      }, 1_000);
+    };
     const handleOffline = () => update();
     const unsubscribeFromOutbox = subscribeToOutboxChanges(() => void refresh());
 
     void refresh();
     window.addEventListener("online", handleOnline);
+    window.addEventListener("online", retryOnlineSync);
     window.addEventListener("offline", handleOffline);
     return () => {
       active = false;
       unsubscribeFromOutbox();
       window.removeEventListener("online", handleOnline);
+      window.removeEventListener("online", retryOnlineSync);
+      window.clearTimeout(onlineRetryTimer);
       window.removeEventListener("offline", handleOffline);
     };
   }, [syncUserId]);

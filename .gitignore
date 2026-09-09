@@ -10,3 +10,5 @@ out/
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
+test-results/
+playwright-report/

@@ -1,4 +1,4 @@
-import type { Group, Payment, PaymentMethod } from "./types";
+import type { Group, Payment, PaymentMethod, UserSettings } from "./types";
 
 export type PaymentExportRecord = Payment & {
   groupName: string | null;
@@ -9,6 +9,9 @@ export type PaymentExportData = {
   schemaVersion: 1;
   exportedAt: string;
   payments: PaymentExportRecord[];
+  groups: Group[];
+  paymentMethods: PaymentMethod[];
+  settings: UserSettings | null;
 };
 
 const csvColumns: Array<{ key: keyof PaymentExportRecord; label: string }> = [
@@ -29,6 +32,7 @@ export function buildPaymentExportData(
   payments: readonly Payment[],
   groups: readonly Group[],
   paymentMethods: readonly PaymentMethod[],
+  settings: UserSettings | null,
   exportedAt: string,
 ): PaymentExportData {
   return {
@@ -41,17 +45,21 @@ export function buildPaymentExportData(
         groupName: groups.find((group) => group.id === payment.groupId)?.name ?? null,
         paymentMethodName: paymentMethods.find((method) => method.id === payment.paymentMethodId)?.name ?? null,
       })),
+    groups: [...groups],
+    paymentMethods: [...paymentMethods],
+    settings,
   };
 }
 
-function escapeCsvCell(value: unknown) {
-  const text = value === null || value === undefined ? "" : String(value);
+function escapeCsvCell(value: unknown, protectFormula = false) {
+  let text = value === null || value === undefined ? "" : String(value);
+  if (protectFormula && /^[=+@-]/.test(text)) text = `'${text}`;
   return `"${text.replace(/"/g, '""')}"`;
 }
 
 export function serializePaymentExportCsv(data: PaymentExportData) {
   const header = csvColumns.map((column) => escapeCsvCell(column.label)).join(",");
-  const rows = data.payments.map((payment) => csvColumns.map((column) => escapeCsvCell(payment[column.key])).join(","));
+  const rows = data.payments.map((payment) => csvColumns.map((column) => escapeCsvCell(payment[column.key], column.key === "title" || column.key === "groupName" || column.key === "paymentMethodName")).join(","));
   return `\uFEFF${[header, ...rows].join("\r\n")}\r\n`;
 }
 

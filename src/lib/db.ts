@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { defaultPaymentMethods } from "./default-payment-methods";
 import { parseSyncPullResponse, parseSyncPushResponse } from "./sync";
+import type { PaymentExportData } from "./payment-export";
 
 const DB_NAME = "payment-manager-local";
 const DB_VERSION = 1;
@@ -22,12 +23,23 @@ const STORE_NAMES = [
   "syncState",
 ] as const;
 
+type SyncResult = "offline" | "pending" | "synced";
+type SyncOptions = {
+  retryInFlight?: boolean;
+};
+
 type StoreName = (typeof STORE_NAMES)[number];
 type LocalEntityStoreName = Exclude<StoreName, "outbox" | "syncState">;
 
 export const OUTBOX_CHANGED_EVENT = "payment-manager:outbox-changed";
 export const SYNC_STATE_CHANGED_EVENT = "payment-manager:sync-state-changed";
 export const LOCAL_DATA_CHANGED_EVENT = "payment-manager:local-data-changed";
+
+let syncInFlight: {
+  userId: string;
+  promise: Promise<SyncResult>;
+  rerunRequested: boolean;
+} | undefined;
 
 export type LocalDataChange = {
   kind: LocalEntityStoreName;
@@ -59,7 +71,10 @@ export function subscribeToLocalDataChanges(onChange: (change: LocalDataChange) 
   return () => window.removeEventListener(LOCAL_DATA_CHANGED_EVENT, handleChange);
 }
 
-function notifyOutboxChanged() {
+function notifyOutboxChanged(source: "local" | "sync" = "local") {
+  if (source === "local" && syncInFlight) {
+    syncInFlight.rerunRequested = true;
+  }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(OUTBOX_CHANGED_EVENT));
   }
@@ -230,6 +245,70 @@ function saveWithOutbox<T extends { id: string }>(storeName: LocalEntityStoreNam
   });
 }
 
+export type PaymentImportResult = {
+  applied: number;
+  skipped: number;
+};
+
+function isNewerImport<T extends { updatedAt: string }>(incoming: T, current: T | undefined) {
+  return !current || new Date(incoming.updatedAt).getTime() > new Date(current.updatedAt).getTime();
+}
+
+export function importPaymentBackup(data: PaymentExportData) {
+  const changes: LocalDataChange[] = [];
+  return runWriteTransaction<PaymentImportResult>(["groups", "paymentMethods", "payments", "settings", "outbox"], (transaction, complete, fail) => {
+    let applied = 0;
+    let skipped = 0;
+    const requests = [
+      ...data.groups.map((group) => ({ storeName: "groups" as const, value: group, upsert: "GROUP_UPSERT" as const, deleted: "GROUP_DELETE" as const })),
+      ...data.paymentMethods.map((method) => ({ storeName: "paymentMethods" as const, value: method, upsert: "PAYMENT_METHOD_UPSERT" as const, deleted: undefined })),
+      ...data.payments.map((payment) => ({ storeName: "payments" as const, value: payment, upsert: "PAYMENT_UPSERT" as const, deleted: "PAYMENT_DELETE" as const })),
+      ...(data.settings ? [{ storeName: "settings" as const, value: data.settings, upsert: "SETTINGS_UPSERT" as const, deleted: undefined }] : []),
+    ];
+
+    if (requests.length === 0) {
+      complete({ applied, skipped });
+      return;
+    }
+
+    let pending = requests.length;
+    const finishRequest = () => {
+      pending -= 1;
+      if (pending === 0) complete({ applied, skipped });
+    };
+
+    requests.forEach(({ storeName, value, upsert, deleted }) => {
+      const request = transaction.objectStore(storeName).get(value.id);
+      request.onsuccess = () => {
+        try {
+          const current = request.result as typeof value | undefined;
+          if (!isNewerImport(value, current)) {
+            skipped += 1;
+            finishRequest();
+            return;
+          }
+
+          transaction.objectStore(storeName).put(value);
+          const operation = "deletedAt" in value && value.deletedAt && deleted ? deleted : upsert;
+          addOutboxOperation(transaction, operation, value.id, value);
+          changes.push({ kind: storeName, entityId: value.id, source: "local" });
+          applied += 1;
+          finishRequest();
+        } catch (cause) {
+          fail(cause);
+        }
+      };
+      request.onerror = () => fail(request.error ?? new Error("Import lookup failed"));
+    });
+  }).then((result) => {
+    if (result.applied > 0) {
+      notifyOutboxChanged();
+      changes.forEach(notifyLocalDataChanged);
+    }
+    return result;
+  });
+}
+
 export async function seedDefaultData() {
   const existing = await getAll<PaymentMethod>("paymentMethods");
   const timestamp = now();
@@ -272,6 +351,56 @@ export function getPayment(id: string) {
 
 export function savePayment(payment: Payment) {
   return saveWithOutbox("payments", "PAYMENT_UPSERT", payment);
+}
+
+export type PaymentBulkUpdate = {
+  groupId?: string | null;
+  paymentMethodId?: string;
+  delete?: boolean;
+};
+
+export type PaymentBulkUpdateResult = {
+  updated: number;
+};
+
+export function bulkUpdatePayments(paymentIds: readonly string[], update: PaymentBulkUpdate) {
+  const ids = new Set(paymentIds.filter((id) => id.trim().length > 0));
+  const hasGroupUpdate = Object.prototype.hasOwnProperty.call(update, "groupId");
+  const hasMethodUpdate = Object.prototype.hasOwnProperty.call(update, "paymentMethodId");
+  const shouldDelete = update.delete === true;
+
+  if (ids.size === 0 || (!hasGroupUpdate && !hasMethodUpdate && !shouldDelete)) return Promise.resolve({ updated: 0 });
+  if (hasMethodUpdate && (!update.paymentMethodId || update.paymentMethodId.trim().length === 0)) return Promise.reject(new Error("支払い方法を指定してください。"));
+  const changes: LocalDataChange[] = [];
+
+  return runWriteTransaction<LocalDataChange[]>(["payments", "outbox"], (transaction, complete, fail) => {
+    const request = transaction.objectStore("payments").getAll();
+    request.onsuccess = () => {
+      try {
+        const timestamp = now();
+        const selected = (request.result as Payment[]).filter((payment) => ids.has(payment.id) && !payment.deletedAt);
+        selected.forEach((payment) => {
+          const nextPayment: Payment = { ...payment, updatedAt: timestamp };
+          if (hasGroupUpdate) nextPayment.groupId = update.groupId ?? null;
+          if (hasMethodUpdate) nextPayment.paymentMethodId = update.paymentMethodId as string;
+          if (shouldDelete) nextPayment.deletedAt = timestamp;
+          transaction.objectStore("payments").put(nextPayment);
+          addOutboxOperation(transaction, shouldDelete ? "PAYMENT_DELETE" : "PAYMENT_UPSERT", nextPayment.id, nextPayment);
+          changes.push({ kind: "payments", entityId: nextPayment.id, source: "local" });
+        });
+        complete(changes);
+      } catch (cause) {
+        fail(cause);
+      }
+    };
+    request.onerror = () => fail(request.error ?? new Error("Payment lookup failed"));
+  }).then((localChanges) => {
+    if (localChanges.length > 0) {
+      notifyOutboxChanged();
+      localChanges.forEach(notifyLocalDataChanged);
+    }
+    return { updated: localChanges.length };
+  });
 }
 
 export function removePayment(id: string) {
@@ -577,8 +706,6 @@ export async function confirmSyncMigration(userId: string) {
   return next;
 }
 
-type SyncResult = "offline" | "pending" | "synced";
-
 async function performSync(syncUserId: string): Promise<SyncResult> {
   const outbox = await listOutbox();
   const syncState = await getSyncState();
@@ -600,7 +727,7 @@ async function performSync(syncUserId: string): Promise<SyncResult> {
     const store = transaction.objectStore("outbox");
     acceptedOutbox.forEach((entry) => store.delete(entry.id));
     await transactionDone(transaction);
-    notifyOutboxChanged();
+    notifyOutboxChanged("sync");
   }
 
   if (result.changes.length > 0) {
@@ -626,18 +753,34 @@ async function performSync(syncUserId: string): Promise<SyncResult> {
   return acceptedOutbox.length === outbox.length ? "synced" : "pending";
 }
 
-let syncInFlight: { userId: string; promise: Promise<SyncResult> } | undefined;
-
-export function trySync(syncUserId?: string | null): Promise<SyncResult> {
+export function trySync(syncUserId?: string | null, options?: SyncOptions): Promise<SyncResult> {
   if (typeof window === "undefined" || !navigator.onLine) return Promise.resolve("offline");
   if (!syncUserId) return Promise.resolve("pending");
-  if (syncInFlight) return syncInFlight.userId === syncUserId ? syncInFlight.promise : Promise.resolve("pending");
+  if (syncInFlight) {
+    if (syncInFlight.userId === syncUserId) {
+      if (options?.retryInFlight) syncInFlight.rerunRequested = true;
+      return syncInFlight.promise;
+    }
+    return Promise.resolve("pending");
+  }
 
-  const promise = performSync(syncUserId).catch(() => "pending" as const).finally(() => {
-    if (syncInFlight?.promise === promise) syncInFlight = undefined;
+  const flight = {
+    userId: syncUserId,
+    promise: Promise.resolve("pending" as SyncResult),
+    rerunRequested: false,
+  };
+  syncInFlight = flight;
+  flight.promise = (async () => {
+    let result: SyncResult = "pending";
+    do {
+      flight.rerunRequested = false;
+      result = await performSync(syncUserId).catch(() => "pending" as const);
+    } while (flight.rerunRequested && navigator.onLine);
+    return result;
+  })().finally(() => {
+    if (syncInFlight === flight) syncInFlight = undefined;
   });
-  syncInFlight = { userId: syncUserId, promise };
-  return promise;
+  return flight.promise;
 }
 
 export { uuid, now };

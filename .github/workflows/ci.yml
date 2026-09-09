@@ -53,3 +53,14 @@ jobs:
 
       - name: Run production build
         run: mise exec -- pnpm build
+
+      - name: Install Playwright browser
+        run: mise exec -- pnpm exec playwright install --with-deps chromium
+
+      - name: Run browser E2E
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/payment_manager
+          AUTH_SECRET: e2e-auth-signing-secret
+          E2E_AUTH_USER_ID: e2e-sync-user
+          E2E_AUTH_SECRET: e2e-sync-secret
+        run: mise exec -- pnpm test:e2e

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { listGroups, listPaymentMethods, listPayments, seedDefaultData, subscribeToLocalDataChanges } from "@/lib/db";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { bulkUpdatePayments, listGroups, listPaymentMethods, listPayments, seedDefaultData, subscribeToLocalDataChanges, type PaymentBulkUpdate } from "@/lib/db";
 import { formatYen } from "@/lib/format";
 import type { Group, Payment, PaymentMethod } from "@/lib/types";
 import { PaymentDateHeading, PaymentList } from "@/components/payment-list";
@@ -10,10 +10,11 @@ import {
   DEFAULT_PAYMENT_SEARCH_FILTERS,
   filterPayments,
   isPaymentSearchActive,
+  isPaymentAmountFilterValid,
   NO_GROUP_FILTER,
   type PaymentSearchFilters,
 } from "@/lib/payment-search";
-import { formatSummaryPeriod, getMonthPeriod, summarizePayments, type PaymentSummaryRow, type SummaryPeriod } from "@/lib/payment-summary";
+import { formatSummaryPeriod, getMonthPeriod, isSummaryPeriodValid, summarizePayments, type PaymentSummaryRow, type SummaryPeriod } from "@/lib/payment-summary";
 
 type SummaryPeriodMode = "current" | "previous" | "custom";
 
@@ -34,9 +35,12 @@ export default function PaymentsPage() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [filters, setFilters] = useState<PaymentSearchFilters>(DEFAULT_PAYMENT_SEARCH_FILTERS);
   const [summaryPeriodMode, setSummaryPeriodMode] = useState<SummaryPeriodMode>("current");
-  const [summaryReferenceDate] = useState(() => new Date());
-  const [customSummaryPeriod, setCustomSummaryPeriod] = useState<SummaryPeriod>(() => getMonthPeriod(new Date()));
+  const [summaryReferenceDate, setSummaryReferenceDate] = useState(() => new Date());
+  const [customSummaryPeriod, setCustomSummaryPeriod] = useState<SummaryPeriod>(() => getMonthPeriod(summaryReferenceDate));
   const [loading, setLoading] = useState(true);
+  const [selectedPaymentIds, setSelectedPaymentIds] = useState<Set<string>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState("");
 
   async function refresh() {
     await seedDefaultData();
@@ -50,6 +54,16 @@ export default function PaymentsPage() {
   useEffect(() => {
     void refresh();
     return subscribeToLocalDataChanges(() => void refresh());
+  }, []);
+
+  useEffect(() => {
+    const refreshSummaryReferenceDate = () => setSummaryReferenceDate(new Date());
+    const timer = window.setInterval(refreshSummaryReferenceDate, 60_000);
+    document.addEventListener("visibilitychange", refreshSummaryReferenceDate);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshSummaryReferenceDate);
+    };
   }, []);
 
   function updateFilter<Key extends keyof PaymentSearchFilters>(key: Key, value: PaymentSearchFilters[Key]) {
@@ -66,12 +80,15 @@ export default function PaymentsPage() {
 
   const filtered = useMemo(() => filterPayments(payments, filters), [filters, payments]);
   const hasActiveFilters = isPaymentSearchActive(filters);
+  const invalidMinAmount = !isPaymentAmountFilterValid(filters.minAmount);
+  const invalidMaxAmount = !isPaymentAmountFilterValid(filters.maxAmount);
   const summaryPeriod = useMemo(() => {
     if (summaryPeriodMode === "previous") return getMonthPeriod(summaryReferenceDate, -1);
     if (summaryPeriodMode === "custom") return customSummaryPeriod;
     return getMonthPeriod(summaryReferenceDate);
   }, [customSummaryPeriod, summaryPeriodMode, summaryReferenceDate]);
   const summary = useMemo(() => summarizePayments(payments, groups, methods, summaryPeriod), [groups, methods, payments, summaryPeriod]);
+  const hasInvalidCustomPeriod = summaryPeriodMode === "custom" && !isSummaryPeriodValid(summaryPeriod);
   const hasIncompleteCustomPeriod = summaryPeriodMode === "custom" && (!summaryPeriod.fromDate || !summaryPeriod.toDate);
   const hasReversedCustomPeriod = summaryPeriodMode === "custom" && summaryPeriod.fromDate > summaryPeriod.toDate;
 
@@ -83,6 +100,79 @@ export default function PaymentsPage() {
     });
     return Array.from(map.entries());
   }, [filtered]);
+
+  const selectedVisibleIds = useMemo(() => filtered.filter((payment) => selectedPaymentIds.has(payment.id)).map((payment) => payment.id), [filtered, selectedPaymentIds]);
+
+  useEffect(() => {
+    const visibleIds = new Set(filtered.map((payment) => payment.id));
+    setSelectedPaymentIds((current) => {
+      const next = new Set([...current].filter((id) => visibleIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [filtered]);
+
+  function togglePaymentSelection(paymentId: string) {
+    setSelectedPaymentIds((current) => {
+      const next = new Set(current);
+      if (next.has(paymentId)) next.delete(paymentId);
+      else next.add(paymentId);
+      return next;
+    });
+    setBulkMessage("");
+  }
+
+  function toggleAllVisible() {
+    const allVisibleSelected = filtered.length > 0 && selectedVisibleIds.length === filtered.length;
+    setSelectedPaymentIds((current) => {
+      const next = new Set(current);
+      filtered.forEach((payment) => {
+        if (allVisibleSelected) next.delete(payment.id);
+        else next.add(payment.id);
+      });
+      return next;
+    });
+    setBulkMessage("");
+  }
+
+  function clearSelection() {
+    setSelectedPaymentIds(new Set());
+    setBulkMessage("");
+  }
+
+  async function applyBulkUpdate(update: PaymentBulkUpdate) {
+    if (selectedVisibleIds.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    setBulkMessage("");
+    try {
+      const result = await bulkUpdatePayments(selectedVisibleIds, update);
+      setBulkMessage(result.updated > 0 ? `${result.updated}件の支払いを更新しました。` : "更新対象の支払いはありません。");
+      if (result.updated > 0) setSelectedPaymentIds(new Set());
+    } catch {
+      setBulkMessage("一括更新に失敗しました。変更は適用されていません。");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function updateGroup(event: ChangeEvent<HTMLSelectElement>) {
+    const value = event.target.value;
+    event.target.value = "";
+    if (!value) return;
+    await applyBulkUpdate({ groupId: value === NO_GROUP_FILTER ? null : value });
+  }
+
+  async function updatePaymentMethod(event: ChangeEvent<HTMLSelectElement>) {
+    const value = event.target.value;
+    event.target.value = "";
+    if (!value) return;
+    await applyBulkUpdate({ paymentMethodId: value });
+  }
+
+  async function deleteSelected() {
+    if (selectedVisibleIds.length === 0 || bulkBusy) return;
+    if (!window.confirm(`選択した${selectedVisibleIds.length}件の支払いを削除しますか？`)) return;
+    await applyBulkUpdate({ delete: true });
+  }
 
   return (
     <div className="page-narrow">
@@ -101,11 +191,13 @@ export default function PaymentsPage() {
           </label>
           <label className="field" htmlFor="payment-search-min-amount">
             <span className="field-label">最小金額（円）</span>
-            <input id="payment-search-min-amount" className="text-input" type="number" min="0" step="1" inputMode="numeric" value={filters.minAmount} onChange={(event) => updateFilter("minAmount", event.target.value.replace(/\D/g, ""))} placeholder="指定なし" />
+            <input id="payment-search-min-amount" className="text-input" type="text" inputMode="numeric" pattern="[0-9]*" value={filters.minAmount} aria-invalid={invalidMinAmount} onChange={(event) => updateFilter("minAmount", event.target.value)} placeholder="指定なし" />
+            {invalidMinAmount ? <span className="field-error">半角数字で入力してください。</span> : null}
           </label>
           <label className="field" htmlFor="payment-search-max-amount">
             <span className="field-label">最大金額（円）</span>
-            <input id="payment-search-max-amount" className="text-input" type="number" min="0" step="1" inputMode="numeric" value={filters.maxAmount} onChange={(event) => updateFilter("maxAmount", event.target.value.replace(/\D/g, ""))} placeholder="指定なし" />
+            <input id="payment-search-max-amount" className="text-input" type="text" inputMode="numeric" pattern="[0-9]*" value={filters.maxAmount} aria-invalid={invalidMaxAmount} onChange={(event) => updateFilter("maxAmount", event.target.value)} placeholder="指定なし" />
+            {invalidMaxAmount ? <span className="field-error">半角数字で入力してください。</span> : null}
           </label>
           <label className="field" htmlFor="payment-search-from-date">
             <span className="field-label">開始日</span>
@@ -133,6 +225,24 @@ export default function PaymentsPage() {
         </div>
         <div className="search-result" aria-live="polite"><span><strong>{filtered.length}</strong>件</span><span>{hasActiveFilters ? `全${payments.length}件から絞り込み中` : "すべての履歴"}</span></div>
       </section>
+      <section className="panel bulk-panel" aria-labelledby="payment-bulk-heading">
+        <div className="panel-heading bulk-panel-heading"><div><h2 id="payment-bulk-heading">まとめて操作</h2><p className="helper-text">現在表示されている履歴だけが対象です。</p></div><strong className="bulk-count">{selectedVisibleIds.length}件選択</strong></div>
+        <div className="bulk-toolbar">
+          <label className="bulk-select-all"><input type="checkbox" checked={filtered.length > 0 && selectedVisibleIds.length === filtered.length} onChange={toggleAllVisible} disabled={filtered.length === 0 || bulkBusy} />表示中を全選択</label>
+          <select className="select-input bulk-action-input" aria-label="グループを一括変更" defaultValue="" onChange={(event) => void updateGroup(event)} disabled={selectedVisibleIds.length === 0 || bulkBusy}>
+            <option value="">グループを変更…</option>
+            <option value={NO_GROUP_FILTER}>グループなし</option>
+            {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+          </select>
+          <select className="select-input bulk-action-input" aria-label="支払い方法を一括変更" defaultValue="" onChange={(event) => void updatePaymentMethod(event)} disabled={selectedVisibleIds.length === 0 || bulkBusy}>
+            <option value="">支払い方法を変更…</option>
+            {methods.filter((method) => method.isActive && !method.deletedAt).map((method) => <option key={method.id} value={method.id}>{method.name}</option>)}
+          </select>
+          <button className="danger-button" type="button" onClick={() => void deleteSelected()} disabled={selectedVisibleIds.length === 0 || bulkBusy}>選択を削除</button>
+          <button className="small-button" type="button" onClick={clearSelection} disabled={selectedVisibleIds.length === 0 || bulkBusy}>選択を解除</button>
+        </div>
+        {bulkMessage ? <p className="helper-text bulk-message" aria-live="polite">{bulkMessage}</p> : null}
+      </section>
       <section className="panel summary-panel" aria-labelledby="payment-summary-heading">
         <div className="panel-heading summary-panel-heading">
           <div><h2 id="payment-summary-heading">支払い集計</h2><p className="helper-text summary-description">期間ごとの支出と内訳を確認できます。</p></div>
@@ -144,21 +254,23 @@ export default function PaymentsPage() {
           <label className="field" htmlFor="summary-from-date"><span className="field-label">開始日</span><input id="summary-from-date" className="text-input" type="date" value={customSummaryPeriod.fromDate} onChange={(event) => updateCustomSummaryPeriod("fromDate", event.target.value)} /></label>
           <label className="field" htmlFor="summary-to-date"><span className="field-label">終了日</span><input id="summary-to-date" className="text-input" type="date" value={customSummaryPeriod.toDate} onChange={(event) => updateCustomSummaryPeriod("toDate", event.target.value)} /></label>
         </div> : null}
-        <p className={hasIncompleteCustomPeriod || hasReversedCustomPeriod ? "summary-period-label error-text" : "summary-period-label"}>{hasIncompleteCustomPeriod ? "開始日と終了日を入力してください。" : hasReversedCustomPeriod ? "開始日は終了日以前にしてください。" : formatSummaryPeriod(summaryPeriod)}</p>
-        <div className="summary-metrics">
-          <div className="summary-metric summary-metric-primary"><span className="summary-metric-label">合計額</span><strong>{formatYen(summary.total)}</strong></div>
-          <div className="summary-metric"><span className="summary-metric-label">支払い件数</span><strong>{summary.count}件</strong></div>
-          <div className="summary-metric"><span className="summary-metric-label">平均支払額</span><strong>{formatYen(summary.averageAmount)}</strong></div>
-        </div>
-        <div className="summary-breakdowns">
-          <SummaryBreakdown title="グループ別" rows={summary.byGroup} />
-          <SummaryBreakdown title="支払い方法別" rows={summary.byPaymentMethod} />
-        </div>
+        <p className={hasInvalidCustomPeriod ? "summary-period-label error-text" : "summary-period-label"}>{hasIncompleteCustomPeriod ? "開始日と終了日を入力してください。" : hasReversedCustomPeriod ? "開始日は終了日以前にしてください。" : formatSummaryPeriod(summaryPeriod)}</p>
+        {hasInvalidCustomPeriod ? <div className="summary-invalid" role="alert">有効な期間を指定すると集計を表示します。</div> : <>
+          <div className="summary-metrics">
+            <div className="summary-metric summary-metric-primary"><span className="summary-metric-label">合計額</span><strong>{formatYen(summary.total)}</strong></div>
+            <div className="summary-metric"><span className="summary-metric-label">支払い件数</span><strong>{summary.count}件</strong></div>
+            <div className="summary-metric"><span className="summary-metric-label">平均支払額</span><strong>{formatYen(summary.averageAmount)}</strong></div>
+          </div>
+          <div className="summary-breakdowns">
+            <SummaryBreakdown title="グループ別" rows={summary.byGroup} />
+            <SummaryBreakdown title="支払い方法別" rows={summary.byPaymentMethod} />
+          </div>
+        </>}
       </section>
       {loading ? <div className="loading-state">履歴を読み込んでいます…</div> : grouped.length === 0 ? <div className="panel"><div className="empty-state">この条件の支払いはありません。</div></div> : grouped.map(([date, items]) => (
         <section className="history-section" key={date}>
           <PaymentDateHeading value={items[0].paidAt} />
-          <PaymentList payments={items} paymentMethods={methods} groups={groups} />
+          <PaymentList payments={items} paymentMethods={methods} groups={groups} selectable selectedPaymentIds={selectedPaymentIds} onTogglePayment={togglePaymentSelection} />
         </section>
       ))}
     </div>

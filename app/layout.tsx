@@ -3,6 +3,7 @@ import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { AuthStatus } from "@/components/auth-status";
 import { SessionProvider } from "@/components/session-provider";
+import { authEnabled } from "@/auth";
 
 export const metadata: Metadata = {
   title: "Payment Log — 支払いを、すぐ残す。",
@@ -21,11 +22,13 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ja">
       <body>
-        <SessionProvider>
+        <SessionProvider enabled={authEnabled}>
           <AppShell authStatus={<AuthStatus />}>{children}</AppShell>
         </SessionProvider>
       </body>

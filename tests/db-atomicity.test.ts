@@ -316,6 +316,40 @@ describe("IndexedDB entity/outbox atomicity", () => {
     unsubscribe();
   });
 
+  it("reruns sync when a local change is created during an in-flight sync", async () => {
+    await confirmSyncMigration("test-user");
+    let releaseFirstPush!: (response: Response) => void;
+    let resolveFirstPushStarted!: () => void;
+    const firstPush = new Promise<Response>((resolve) => { releaseFirstPush = resolve; });
+    const firstPushStarted = new Promise<void>((resolve) => { resolveFirstPushStarted = resolve; });
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(async () => {
+        resolveFirstPushStarted();
+        return firstPush;
+      })
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changes: [], nextCursor: null, hasMore: false }), {
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({ accepted: (await listOutbox()).map((entry) => entry.id), changes: [] }), {
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ changes: [], nextCursor: null, hasMore: false }), {
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    const sync = trySync("test-user");
+    await firstPushStarted;
+    await savePayment(payment("sync-during-flight"));
+    releaseFirstPush(new Response(JSON.stringify({ accepted: [], changes: [] }), {
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    await expect(sync).resolves.toBe("synced");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(await listOutbox()).toEqual([]);
+    fetchMock.mockRestore();
+  });
+
   it("applies remote changes without creating outbox entries", async () => {
     const timestamp = "2026-09-07T00:00:00.000Z";
     const remote = payment("remote-apply");

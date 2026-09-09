@@ -33,6 +33,10 @@ function parseAmount(value: string) {
   return Number.isSafeInteger(amount) ? amount : null;
 }
 
+export function isPaymentAmountFilterValid(value: string) {
+  return value.trim() === "" || parseAmount(value) !== null;
+}
+
 function normalizeDateFilter(value: string) {
   if (!DATE_INPUT_PATTERN.test(value)) return null;
 

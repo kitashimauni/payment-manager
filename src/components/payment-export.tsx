@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { buildPaymentExportData, serializePaymentExportCsv, serializePaymentExportJson } from "@/lib/payment-export";
-import type { Group, Payment, PaymentMethod } from "@/lib/types";
+import type { Group, Payment, PaymentMethod, UserSettings } from "@/lib/types";
 
 function localDateInputValue(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -22,13 +22,13 @@ function downloadFile(content: string, filename: string, type: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export function PaymentExport({ payments, groups, paymentMethods }: { payments: Payment[]; groups: Group[]; paymentMethods: PaymentMethod[] }) {
+export function PaymentExport({ payments, groups, paymentMethods, settings }: { payments: Payment[]; groups: Group[]; paymentMethods: PaymentMethod[]; settings: UserSettings | null }) {
   const [message, setMessage] = useState("");
   const availablePaymentCount = payments.filter((payment) => !payment.deletedAt).length;
 
   function exportFile(format: "csv" | "json") {
     const exportedAt = new Date().toISOString();
-    const data = buildPaymentExportData(payments, groups, paymentMethods, exportedAt);
+    const data = buildPaymentExportData(payments, groups, paymentMethods, settings, exportedAt);
     const date = localDateInputValue(new Date());
     if (format === "csv") {
       downloadFile(serializePaymentExportCsv(data), `payment-log-${date}.csv`, "text/csv");

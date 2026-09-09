@@ -10,4 +10,7 @@ export default defineConfig({
       "@": resolve(repositoryRoot, "src"),
     },
   },
+  test: {
+    include: ["tests/**/*.test.ts"],
+  },
 });
