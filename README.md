@@ -4,7 +4,7 @@
 
 ## 開発
 
-Node.js 26.8.1とpnpm 11.21.0はプロジェクトの `mise.toml` で固定しています。
+Node.js 26.13.1 (LTS)とpnpm 11.21.0はプロジェクトの `mise.toml` で固定しています。
 
 ```bash
 mise install
