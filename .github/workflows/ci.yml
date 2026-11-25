@@ -65,3 +65,65 @@ jobs:
           E2E_AUTH_USER_ID: e2e-sync-user
           E2E_AUTH_SECRET: e2e-sync-secret
         run: mise exec -- pnpm test:e2e
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare example environment and validate Compose
+        run: |
+          cp .env.docker.example .env.docker
+          docker compose --env-file .env.docker config -q
+
+      - name: Build the pinned application and migration images
+        run: docker compose --env-file .env.docker build app migrate
+
+      - name: Start database and apply migrations
+        run: |
+          docker compose --env-file .env.docker up -d --wait db
+          docker compose --env-file .env.docker run --rm migrate
+
+      - name: Start standalone app and check HTTP and PWA assets
+        run: |
+          set -euo pipefail
+          docker compose --env-file .env.docker up -d --no-build --wait app
+          curl --fail --silent --show-error http://127.0.0.1:3000/ -o /tmp/payment-manager.html
+          curl --fail --silent --show-error http://127.0.0.1:3000/manifest.webmanifest -o /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:3000/sw.js -o /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:3000/icons/icon-192.png -o /dev/null
+          asset_path="$(grep -oE '/_next/static/[^" ]+\.js' /tmp/payment-manager.html | sed -n '1p')"
+          test -n "$asset_path"
+          curl --fail --silent --show-error "http://127.0.0.1:3000$asset_path" -o /dev/null
+
+      - name: Verify DB volume survives recreation and archive can be restored
+        run: |
+          set -euo pipefail
+          printf '%s\n' "CREATE TABLE ci_persistence (value text NOT NULL); INSERT INTO ci_persistence VALUES ('preserved');" | \
+            docker compose --env-file .env.docker exec -T db \
+              sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+          bash scripts/backup-postgres.sh .env.docker
+          docker compose --env-file .env.docker down
+          docker compose --env-file .env.docker up -d --wait db
+          persisted="$(docker compose --env-file .env.docker exec -T db \
+            sh -c 'psql -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT value FROM ci_persistence"' | tr -d '\r')"
+          test "$persisted" = preserved
+          docker compose --env-file .env.docker exec -T db \
+            sh -c 'createdb -U "$POSTGRES_USER" ci_restore_check'
+          docker compose --env-file .env.docker exec -T db \
+            sh -c 'pg_restore --no-owner --no-acl -U "$POSTGRES_USER" -d ci_restore_check' \
+            < "$(find backups -maxdepth 1 -name 'payment-manager-*.dump' -print -quit)"
+          restored="$(docker compose --env-file .env.docker exec -T db \
+            sh -c 'psql -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d ci_restore_check -c "SELECT value FROM ci_persistence"' | tr -d '\r')"
+          test "$restored" = preserved
+          docker compose --env-file .env.docker up -d --no-build --wait app
+          curl --fail --silent --show-error http://127.0.0.1:3000/ -o /dev/null
+
+      - name: Show container state on failure
+        if: failure()
+        run: docker compose --env-file .env.docker ps -a
+
+      - name: Stop containers (retain the data volume)
+        if: always()
+        run: docker compose --env-file .env.docker down

@@ -14,6 +14,23 @@ mise exec -- pnpm dev
 
 ブラウザで `http://localhost:3000` を開いてください。初回起動時に支払い方法の初期値（現金、Suica、PayPay、Visa、Mastercard、QUICPay）がIndexedDBへ作成されます。
 
+## Proxmox LXC / Docker Compose での運用（Issue #36）
+
+非特権LXC（または互換性のあるVM）向けに、Node.js 26.13.1 / pnpm 11.21.0 のマルチステージイメージ、PostgreSQL 17の永続Volume、明示実行するDrizzleマイグレーションを用意しています。初回起動の概要は以下のとおりです。
+
+```bash
+cp .env.docker.example .env.docker
+chmod 600 .env.docker
+# .env.docker のパスワード、DATABASE_URL、APP_IMAGE_TAGなどを編集
+docker compose --env-file .env.docker config -q
+docker compose --env-file .env.docker build app migrate
+docker compose --env-file .env.docker up -d --wait db
+docker compose --env-file .env.docker run --rm migrate
+docker compose --env-file .env.docker up -d --no-build --wait app
+```
+
+ポートは初期状態では `127.0.0.1:3000` にのみ公開され、DBのポートはホストに公開しません。既存リバースプロキシからのHTTPS公開とGoogle OAuthは別途設定が必要です。**実運用に入る前に** [LXCデプロイ・更新・バックアップ/復元手順](docs/deployment-lxc.md) を確認してください。通常の更新で `docker compose down -v` は実行しません。
+
 ## 環境変数
 
 `.env.example`を`.env.local`へコピーして使用します。Local Firstの画面操作には認証用環境変数は必要ありません。
@@ -101,6 +118,6 @@ mise exec -- pnpm exec playwright install chromium
 mise exec -- pnpm test:e2e
 ```
 
-CIではPostgreSQLマイグレーション、型検査、Vitest（統合テストを含む）、本番ビルド、ChromiumのPlaywright E2Eをすべて実行します。Playwrightの同期E2EだけはCI専用Credentials providerでテストユーザーを発行し、認証済みのPush/Pullを実際のPostgreSQLに対して検証します。開発の基準ブランチは `main` とし、機能ブランチのPRは原則 `main` をbaseにします。依存する変更をstackする場合は下位PRから順番にマージします。
+CIではPostgreSQLマイグレーション、型検査、Vitest（統合テストを含む）、本番ビルド、ChromiumのPlaywright E2Eをすべて実行します。さらにDocker Composeから独立したPostgreSQLとstandalone本番アプリを起動し、マイグレーション、HTTP/PWAアセット、DB永続化、バックアップ復元を検証します。Playwrightの同期E2EだけはCI専用Credentials providerでテストユーザーを発行し、認証済みのPush/Pullを実際のPostgreSQLに対して検証します。開発の基準ブランチは `main` とし、機能ブランチのPRは原則 `main` をbaseにします。依存する変更をstackする場合は下位PRから順番にマージします。
 
-現在のアプリバージョンは `0.1.0` です。v0.1.0ではLocal First、Google OAuthを設定した同期、JSONバックアップ、主要画面のブラウザE2Eをリリース確認範囲とし、本番インフラ構築と実Googleアカウントでの運用検証はリリース後の作業とします。
+現在のアプリバージョンは `0.1.0` です。v0.1.0ではLocal First、Google OAuthを設定した同期、JSONバックアップ、主要画面のブラウザE2Eをリリース確認範囲とします。コンテナ構成と運用手順は実装しましたが、Proxmox上での実配備と実Googleアカウントでの運用検証は別作業です。
