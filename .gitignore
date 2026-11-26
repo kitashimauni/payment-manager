@@ -6,6 +6,8 @@ next-env.d.ts
 out/
 .env*
 !.env.example
+!.env.docker.example
+backups/
 *.log
 npm-debug.log*
 pnpm-debug.log*

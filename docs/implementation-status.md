@@ -18,6 +18,7 @@
 | 認証 | Issue #1の基盤を実装済み | Auth.js + Google OAuth、Auth.js生成のUUIDユーザーID、未設定時のLocal Only表示、OAuth `accounts`テーブル |
 | PostgreSQL/Drizzle | 実装済み | `src/server/db/schema.ts` と `drizzle/` にAuth.jsのユーザー/アカウント、および所有ユーザー、グループ、支払い方法、支払い、ユーザー設定の定義を追加 |
 | 自動テスト/CI | 実装済み | IndexedDBの主要フローとLWWのdelete/update競合をVitestで検証し、Playwrightで主要画面のCRUD、検索/集計、Export/Import、オフライン/PWA、Group・Payment Method履歴、認証済みoffline→online同期を検証。GitHub Actionsでmise経由のinstall / typecheck / test / build / Chromium E2Eを実行。PostgreSQL統合テストでは2デバイスのcursor同期も確認 |
+| Docker Composeデプロイ（Issue #36） | 構成・CI実装済み（LXC現地検証待ち） | Node 26/pnpm 11のstandalone runner、PostgreSQL 17永続Volume、明示的なmigrate、バックアップ/復元手順、DockerスモークCI、非特権LXC手順（`docs/deployment-lxc.md`）。実際のProxmox構築やOAuth/HTTPS公開は別作業 |
 
 ## 重要な実装判断
 
@@ -48,4 +49,5 @@
 
 ## 残りの実装単位
 
-1. 本番インフラ構築、実Google OAuthアカウントを使った運用検証、v0.1.0公開後の運用改善を行う。
+1. 非特権LXCでのDocker互換性とストレージドライバを現地確認し、HTTPSリバースプロキシ・DNS・Google OAuthの実設定を行う。
+2. PostgreSQL論理バックアップの定期実行・LXC外保存先・復元演習を構築し、実Googleアカウントと実端末でLocal First/同期を運用検証する。

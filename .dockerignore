@@ -1,0 +1,14 @@
+.git
+.github
+.codex
+.env*
+node_modules
+.pnpm-store
+.next
+out
+backups
+test-results
+playwright-report
+*.log
+*.tsbuildinfo
+next-env.d.ts

@@ -57,7 +57,8 @@ const e2eProvider = e2eAuthEnabled
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter,
   providers: [googleProvider, e2eProvider].filter((provider): provider is NonNullable<typeof provider> => provider !== null),
-  trustHost: e2eAuthEnabled,
+  // Only trust forwarded headers in CI or behind an explicitly trusted proxy.
+  trustHost: e2eAuthEnabled || process.env.AUTH_TRUST_HOST === "true",
   session: { strategy: "jwt" },
   secret: process.env.AUTH_SECRET,
   callbacks: {
