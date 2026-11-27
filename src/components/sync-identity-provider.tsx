@@ -4,10 +4,11 @@ import { useSession } from "next-auth/react";
 import { createContext, useContext, useEffect, useState } from "react";
 
 type SyncIdentity =
-  | { status: "loading" | "unavailable" | "local-only"; userId: null; displayName: null; mode: null }
+  | { status: "loading" | "unavailable" | "unauthenticated" | "local-only"; userId: null; displayName: null; mode: null }
   | { status: "authenticated"; userId: string; displayName: string; mode: "oauth" | "trusted-proxy-single-user" };
 
 const unavailable: SyncIdentity = { status: "unavailable", userId: null, displayName: null, mode: null };
+const unauthenticated: SyncIdentity = { status: "unauthenticated", userId: null, displayName: null, mode: null };
 const localOnly: SyncIdentity = { status: "local-only", userId: null, displayName: null, mode: null };
 const loading: SyncIdentity = { status: "loading", userId: null, displayName: null, mode: null };
 
@@ -37,6 +38,12 @@ export function SyncIdentityProvider({ children, enabled }: { children: React.Re
       };
       try {
         const response = await fetch("/api/sync/identity", { cache: "no-store", credentials: "same-origin", signal: controller.signal });
+        if (response.status === 401) {
+          const result: unknown = await response.json();
+          if (typeof result === "object" && result !== null && "reason" in result && result.reason === "authentication-required") {
+            return apply(unauthenticated);
+          }
+        }
         if (!response.ok) return apply(unavailable);
         const result: unknown = await response.json();
         if (typeof result === "object" && result !== null && "status" in result) {

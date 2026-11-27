@@ -15,7 +15,7 @@ const navigation = [
   { href: "/settings", label: "設定", icon: "⚙" },
 ];
 
-function NetworkStatus({ syncUserId, syncUnavailable }: { syncUserId: string | null; syncUnavailable: boolean }) {
+function NetworkStatus({ syncUserId, syncUnavailable, loginRequired }: { syncUserId: string | null; syncUnavailable: boolean; loginRequired: boolean }) {
   const [online, setOnline] = useState(false);
   const [pending, setPending] = useState(0);
 
@@ -71,7 +71,7 @@ function NetworkStatus({ syncUserId, syncUnavailable }: { syncUserId: string | n
   return (
     <div className={`network-status ${online ? "is-online" : "is-offline"}`}>
       <span className="status-dot" aria-hidden="true" />
-      {online ? (syncUnavailable ? "同期接続不可" : pending > 0 ? `同期待ち ${pending}` : "オンライン") : "オフライン"}
+      {online ? (syncUnavailable ? "同期接続不可" : loginRequired ? "ログイン待ち" : pending > 0 ? `同期待ち ${pending}` : "オンライン") : "オフライン"}
     </div>
   );
 }
@@ -97,7 +97,7 @@ export function AppShell({ children, authStatus }: { children: React.ReactNode; 
             <div className="topbar-actions">
               {identity.mode === "trusted-proxy-single-user" ? <span className="auth-status auth-user">Tailnet 同期</span> : null}
               {authStatus}
-              <NetworkStatus syncUserId={syncUserId} syncUnavailable={identity.status === "unavailable"} />
+              <NetworkStatus syncUserId={syncUserId} syncUnavailable={identity.status === "unavailable"} loginRequired={identity.status === "unauthenticated"} />
             </div>
           </div>
         </header>
