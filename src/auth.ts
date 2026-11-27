@@ -5,6 +5,9 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import { db } from "@/server/db/client";
 import { accounts, users } from "@/server/db/schema";
+import { readAuthMode, SINGLE_USER_MODE } from "@/server/sync/auth-mode";
+
+const selectedMode = readAuthMode().mode;
 
 const googleClientId = process.env.AUTH_GOOGLE_ID;
 const googleClientSecret = process.env.AUTH_GOOGLE_SECRET;
@@ -16,10 +19,11 @@ const e2eAuthSecret = process.env.E2E_AUTH_SECRET;
  * keeps the app in Local Only mode instead of making local entry unavailable.
  */
 const googleAuthEnabled = Boolean(
-  process.env.AUTH_SECRET && googleClientId && googleClientSecret && db,
+  (selectedMode === "auto" || selectedMode === "google") && process.env.AUTH_SECRET && googleClientId && googleClientSecret && db,
 );
-export const e2eAuthEnabled = Boolean(process.env.AUTH_SECRET && db && e2eAuthUserId && e2eAuthSecret);
+export const e2eAuthEnabled = Boolean(selectedMode === "auto" && process.env.AUTH_SECRET && db && e2eAuthUserId && e2eAuthSecret);
 export const authEnabled = googleAuthEnabled || e2eAuthEnabled;
+export const trustedSingleUserEnabled = selectedMode === SINGLE_USER_MODE;
 
 const adapter = db
   ? DrizzleAdapter(db, {

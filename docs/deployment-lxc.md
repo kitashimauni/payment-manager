@@ -37,11 +37,98 @@ chmod 600 .env.docker
 - `APP_IMAGE_TAG` は `git rev-parse --short HEAD` の結果など、**デプロイするコミット固有の値**に変更する。サンプルの `local` は CI / 試用向けで、更新後のロールバック用には適さない。
 - `APP_BIND_ADDRESS=127.0.0.1` は同じ LXC 内にリバースプロキシがある場合の初期値。別 LXC の既存プロキシから接続する場合に限り、この LXC の**特定の内部 IP アドレス**へ変更し、Proxmox / ゲストのファイアウォールで接続元をプロキシに限定する。`0.0.0.0` への無条件公開は避ける。
 - `AUTH_SECRET`・`AUTH_GOOGLE_ID`・`AUTH_GOOGLE_SECRET` は未設定なら Local Only のまま動作する。Google OAuth を有効化する場合はこれらと正常な `DATABASE_URL` が必要。`AUTH_URL` は公開 HTTPS の URL、Google Cloud の callback は `https://<公開ドメイン>/api/auth/callback/google` に合わせる。
+- `AUTH_MODE` は既定で `auto`。明示的な `google` は認証設定不足で起動を拒否し、`local-only` はOAuth変数があってもサーバー同期を無効にする。Issue #38の `trusted-proxy-single-user` は下記の専用節を参照する。
 - リバースプロキシが `Host`、`X-Forwarded-Host`、`X-Forwarded-Proto` を信頼できる値に**設定し直す**ことを確認した場合のみ `AUTH_TRUST_HOST=true` にする（Auth.js は転送ヘッダーを信頼する）。クライアントが任意の値を送り込める設定で有効化しない。
 
 PostgreSQL の `5432` はホストへ公開しない。`db` は Docker の `internal` ネットワークにのみ所属し、`app` は内部DBネットワークとWeb用ネットワークに所属する。本番の TLS 終端は既存リバースプロキシで行う。
 
 **重要：** `http://LXCのIP:3000` は別端末のブラウザでは通常 secure context にならないため、Service Worker とオフライン PWA を正常に使うには HTTPS が必要。`localhost` での動作確認は例外。URL / Origin を変更すると以前の IndexedDB と Outbox は自動で移動されないため、移行前に設定画面の JSON エクスポート、移行後にインポートを検討する（未同期データを特に確認する）。
+
+## Tailscale限定の単一ユーザー同期（Issue #38）
+
+この節はGoogle OAuthを使わない、**個人管理のTailnet専用**の構成。ログイン画面をなくす代わりに、Tailnetへの参加許可そのものがアプリのアクセス権となる。複数人で同じTailnetを使う場合は、ACL/grantsで指定端末・ユーザーだけに許可する。**インターネット向け443公開、サーバーの `0.0.0.0:3000` 公開、外部プロキシとの平文区間は避ける。** Tailscaleの制御プレーンや参加端末が侵害されると単一ユーザーの全記録を操作できるため、運用者がそのリスクを受容する構成である。
+
+### 1. LXC内のTailscale・DNS・TLS
+
+1. 非特権LXC内へTailscaleをインストールし、管理するTailnetへ参加させる。必要な `/dev/net/tun` の受け渡しはProxmox側の正規の方法で設定し、**特権LXC化やAppArmor無効化はしない**。`tailscale status` と `tailscale ip -4` でLXCのTailnet IPv4を確認する。
+2. Tailnet ACL/grantsで、対象LXCの **TCP/443** を管理者の端末にのみ許可する。ゲストのファイアウォールでも443の入力は `tailscale0` に限定し、LAN/WAN側には公開しない。Dockerの公開ポートは引き続き `APP_BIND_ADDRESS=127.0.0.1`、`APP_PORT=3000` を厳守する。
+3. 管理するドメイン（例 `payments.example.com`）をSplit DNSでTailnet IPv4へ解決する。各利用端末がTailscale DNSを使って同じFQDNへ到達できることを確認する。**HTTPとHTTPSでOriginは異なる**ため、初回からHTTPSのURLだけを使う。
+4. DNSサービスのAPIを使う **ACME DNS-01** でそのFQDN用の公開信頼チェーンを持つ証明書を取得する。DNS-01は443や80の公開を必要としない。DNS API tokenは最小権限・rootのみ読取で保管し、更新後のNginx reloadまで定期実行・監視する。DNS provider用のACME plugin/APIのコマンドは契約DNSによって異なるため、各providerの正式手順に合わせる。
+
+### 2. 固定IDと秘密トークンの準備
+
+`.env.docker` に以下のように設定する（値は実際に生成し、**同じ秘密トークンはプロキシ設定にも登録**する）。UUIDと秘密は初回起動後に不用意に変更しない。
+
+```dotenv
+AUTH_MODE=trusted-proxy-single-user
+SINGLE_USER_ID=<uuidgenで生成したUUID>
+TRUSTED_PROXY_TOKEN=<32バイト以上の乱数をbase64urlで表現した値>
+TRUSTED_PROXY_ORIGIN=https://payments.example.com
+APP_BIND_ADDRESS=127.0.0.1
+AUTH_SECRET=
+AUTH_GOOGLE_ID=
+AUTH_GOOGLE_SECRET=
+```
+
+生成例：`uuidgen` と `openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n'`。パスワードやトークンをシェル履歴・ログ・Gitに残さない。`AUTH_URL`、`AUTH_TRUST_HOST` はtrusted modeでは認証に使わず、認証は必ずサーバーが検証する秘密ヘッダーと正しいOriginに依存する。
+
+**DB migration後、アプリを公開する前**に固定ユーザー行を作成する：
+
+```bash
+docker compose --env-file .env.docker up -d --wait db
+docker compose --env-file .env.docker run --rm migrate
+docker compose --env-file .env.docker run --rm migrate node scripts/bootstrap-single-user.mjs
+docker compose --env-file .env.docker up -d --no-build --wait app
+```
+
+Bootstrapは同じUUIDなら再実行可能だが、既存OAuthユーザーの支払いデータを統合・転用しない。`SINGLE_USER_ID` を変更しても旧ユーザーの記録は自動移行されず、既存端末も所有者不一致でPushを停止する。変更する際はまずDB/端末のJSONバックアップを取り、手動移行の要否を判断する。
+
+### 3. 同一LXC内Nginxの例
+
+この例はNginxを **Docker外の同じLXC** で実行し、証明書をDNS-01で取得済みとする。`100.101.102.103` は手元の `tailscale ip -4` の結果へ、ドメイン・証明書パスは実際の値へ置き換える。秘密トークンを公開設定へ直書きせず、`/etc/nginx/private/payment-manager-token.conf` に管理者権限で設置し、`root:root 0600`（親ディレクトリは `0700`）にする。Nginx masterが設定読込できることを確認する。
+
+```nginx
+# /etc/nginx/private/payment-manager-token.conf （秘密ファイル）
+proxy_set_header X-Payment-Manager-Proxy-Token "<TRUSTED_PROXY_TOKENと同じ値>";
+```
+
+```nginx
+# /etc/nginx/sites-available/payment-manager.conf
+server {
+    listen 100.101.102.103:443 ssl;
+    server_name payments.example.com;
+    ssl_certificate     /etc/letsencrypt/live/payments.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/payments.example.com/privkey.pem;
+
+    # 未知のHostやHostヘッダー偽装をアプリへ流さない。
+    if ($host != payments.example.com) { return 421; }
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host payments.example.com;
+        proxy_set_header X-Forwarded-Host payments.example.com;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Real-IP $remote_addr;
+        # クライアント指定値は転送しない。常に秘密の固定値へ上書きする。
+        include /etc/nginx/private/payment-manager-token.conf;
+    }
+}
+```
+
+**クライアントが送った `X-Payment-Manager-Proxy-Token` はNginxの `proxy_set_header` で必ず上書き**する。認証には `Host`、`X-Forwarded-*`、`Tailscale-User-Login` 等を使用しない。`Origin` / `Sec-Fetch-Site` はブラウザ送信値を保持してアプリ側で検証する。POSTは正確な `TRUSTED_PROXY_ORIGIN` の `Origin` が必須、GETも異なるOriginとcross-site/same-site Fetch metadataを拒否する。`X-Payment-Manager-Expected-User` は所有者不一致を検出するためのクライアント申告値で、認証情報ではない。
+
+Nginxで `nginx -t` → reloadした後、`ss -ltn` で443がTailnet IPだけ、3000がloopbackだけでlistenしているか確認する。別のdefault serverやProxmox NATにより443がLAN/WANでも到達可能になっていないか、**Tailnet外の端末からの接続不能を実測**する。
+
+### 4. セキュリティと同期の受入試験
+
+- LXC内から `curl -i -X POST -H 'Origin: https://payments.example.com' http://127.0.0.1:3000/api/sync/push` を試し、**403** になること（秘密ヘッダーなし）。外部から秘密ヘッダーを偽装しても、プロキシで上書きされることをNginx設定と実測で確認する。
+- Tailnet参加端末のブラウザで `https://payments.example.com` を開き、`/api/sync/identity` が認証済み・固定IDで返ること。Tailnet非参加端末から443が到達不能であること。
+- 最初の端末で同期開始確認ボタンを押す**前**にはPushされないこと。支払いを作成してから確認し、2台目でも同じURLを開いて確認後、Pullで支払いが届くこと。
+- オフライン中もIndexedDBへ記録が残り、オンライン復帰時にOutboxから同期できること。異なる同期ユーザーで利用済みのブラウザでは、警告が表示されPushを拒否すること。
+- 不正Originやcross-site metadata、欠落・不正な秘密トークン、未bootstrapのDBユーザーではPush/Pull/identityが失敗すること。アプリをpublicインターネットに公開しないこと。
+
+障害時はローカル記録を維持し、まず `tailscale status`、Split DNS、TLS証明書期限、Nginxのsecret include、Dockerログ、`users`行を確認する。DBを復元する場合も同じ `SINGLE_USER_ID` を維持する。`AUTH_MODE=local-only` へ一時切替するとサーバー同期を停止できる（端末ローカルデータは削除しない）。**同期を別ユーザーに再結合する機能ではない**。秘密トークン漏洩時はアプリとプロキシ双方を同時にローテーションし、Tailnetのアクセス権を再点検する。
 
 ## 3. 初回起動
 

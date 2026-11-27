@@ -713,7 +713,7 @@ async function performSync(syncUserId: string): Promise<SyncResult> {
 
   const response = await fetch("/api/sync/push", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Payment-Manager-Expected-User": syncUserId },
     body: JSON.stringify({ operations: outbox, cursor: syncState.cursor }),
   });
   if (!response.ok) return "pending";
@@ -738,7 +738,7 @@ async function performSync(syncUserId: string): Promise<SyncResult> {
   let hasMore = true;
   while (hasMore) {
     const endpoint = cursor ? `/api/sync/pull?cursor=${encodeURIComponent(cursor)}` : "/api/sync/pull";
-    const pullResponse = await fetch(endpoint);
+    const pullResponse = await fetch(endpoint, { headers: { "X-Payment-Manager-Expected-User": syncUserId } });
     if (!pullResponse.ok) return "pending";
 
     const pullResult = parseSyncPullResponse(await pullResponse.json());

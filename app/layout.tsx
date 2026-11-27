@@ -3,7 +3,8 @@ import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { AuthStatus } from "@/components/auth-status";
 import { SessionProvider } from "@/components/session-provider";
-import { authEnabled } from "@/auth";
+import { SyncIdentityProvider } from "@/components/sync-identity-provider";
+import { authEnabled, trustedSingleUserEnabled } from "@/auth";
 
 export const metadata: Metadata = {
   title: "Payment Log — 支払いを、すぐ残す。",
@@ -29,7 +30,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="ja">
       <body>
         <SessionProvider enabled={authEnabled}>
-          <AppShell authStatus={<AuthStatus />}>{children}</AppShell>
+          <SyncIdentityProvider enabled={authEnabled || trustedSingleUserEnabled}>
+            <AppShell authStatus={<AuthStatus />}>{children}</AppShell>
+          </SyncIdentityProvider>
         </SessionProvider>
       </body>
     </html>

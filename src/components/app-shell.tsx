@@ -1,12 +1,12 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { listOutbox, subscribeToOutboxChanges, trySync } from "@/lib/db";
 import { OfflineAwareLink } from "./offline-aware-link";
 import { PwaRegistration } from "./pwa-registration";
 import { SyncMigrationPrompt } from "./sync-migration-prompt";
+import { useSyncIdentity } from "./sync-identity-provider";
 
 const navigation = [
   { href: "/", label: "記録", icon: "＋" },
@@ -15,7 +15,7 @@ const navigation = [
   { href: "/settings", label: "設定", icon: "⚙" },
 ];
 
-function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
+function NetworkStatus({ syncUserId, syncUnavailable, loginRequired }: { syncUserId: string | null; syncUnavailable: boolean; loginRequired: boolean }) {
   const [online, setOnline] = useState(false);
   const [pending, setPending] = useState(0);
 
@@ -71,15 +71,15 @@ function NetworkStatus({ syncUserId }: { syncUserId: string | null }) {
   return (
     <div className={`network-status ${online ? "is-online" : "is-offline"}`}>
       <span className="status-dot" aria-hidden="true" />
-      {online ? (pending > 0 ? `同期待ち ${pending}` : "オンライン") : "オフライン"}
+      {online ? (syncUnavailable ? "同期接続不可" : loginRequired ? "ログイン待ち" : pending > 0 ? `同期待ち ${pending}` : "オンライン") : "オフライン"}
     </div>
   );
 }
 
 export function AppShell({ children, authStatus }: { children: React.ReactNode; authStatus: React.ReactNode }) {
   const pathname = usePathname();
-  const { data: session, status: sessionStatus } = useSession();
-  const syncUserId = sessionStatus === "authenticated" ? session.user?.id ?? null : null;
+  const identity = useSyncIdentity();
+  const syncUserId = identity.status === "authenticated" ? identity.userId : null;
 
   return (
     <>
@@ -95,8 +95,9 @@ export function AppShell({ children, authStatus }: { children: React.ReactNode; 
               </span>
             </OfflineAwareLink>
             <div className="topbar-actions">
+              {identity.mode === "trusted-proxy-single-user" ? <span className="auth-status auth-user">Tailnet 同期</span> : null}
               {authStatus}
-              <NetworkStatus syncUserId={syncUserId} />
+              <NetworkStatus syncUserId={syncUserId} syncUnavailable={identity.status === "unavailable"} loginRequired={identity.status === "unauthenticated"} />
             </div>
           </div>
         </header>

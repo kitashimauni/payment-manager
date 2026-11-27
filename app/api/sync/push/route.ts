@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { auth, authEnabled } from "@/auth";
+import { resolveSyncPrincipal } from "@/server/sync/principal";
 import { defaultPaymentMethodName } from "@/lib/default-payment-methods";
 import { db } from "@/server/db/client";
 import {
@@ -112,30 +112,21 @@ function orderedOperations(operations: PushOperation[]) {
 
 export async function POST(request: Request) {
   const database = db;
-  if (!authEnabled || !database) {
+  if (!database) {
     return NextResponse.json(
       { accepted: [], reason: "server-sync-not-configured" },
       { status: 503 },
     );
   }
 
-  let session;
-  try {
-    session = await auth();
-  } catch {
+  const principal = await resolveSyncPrincipal(request, true);
+  if (!principal.ok) {
     return NextResponse.json(
-      { accepted: [], reason: "authentication-unavailable" },
-      { status: 503 },
+      { accepted: [], reason: principal.reason },
+      { status: principal.status },
     );
   }
-
-  const userId = session?.user?.id;
-  if (!userId) {
-    return NextResponse.json(
-      { accepted: [], reason: "authentication-required" },
-      { status: 401 },
-    );
-  }
+  const userId = principal.principal.userId;
 
   let parsed: ReturnType<typeof parsePushRequest>;
   try {

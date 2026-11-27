@@ -249,6 +249,64 @@ integrationDescribe("authenticated sync push", () => {
     }
   });
 
+  it("syncs a real payment between trusted-proxy devices and rejects forged requests", async () => {
+    const trustedUserId = "8ed64442-9980-43c3-9289-e509032b6d1c";
+    const token = Buffer.alloc(48, 42).toString("base64url");
+    const origin = "https://payments.example.com";
+    const trustedHeaders = {
+      "X-Payment-Manager-Proxy-Token": token,
+      "X-Payment-Manager-Expected-User": trustedUserId,
+      "Sec-Fetch-Site": "same-origin",
+    };
+    const deviceAPush = (headers: Record<string, string> = {}) => new Request(`${origin}/api/sync/push`, {
+      method: "POST",
+      headers: { ...trustedHeaders, Origin: origin, "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ operations: [
+        {
+          id: "trusted-method-operation", type: "PAYMENT_METHOD_UPSERT", entityId: "trusted-method", createdAt: timestamp,
+          payload: { id: "trusted-method", name: "Tailnetカード", sortOrder: 0, isActive: true, createdAt: timestamp, updatedAt: timestamp, deletedAt: null },
+        },
+        {
+          id: "trusted-payment-operation", type: "PAYMENT_UPSERT", entityId: "trusted-payment", createdAt: timestamp,
+          payload: { ...paymentPayload("trusted-payment", "trusted-method"), amount: 2750, title: "端末Aの支払い" },
+        },
+      ] }),
+    });
+    const deviceBPull = (headers: Record<string, string> = {}) => new Request(`${origin}/api/sync/pull`, {
+      headers: { ...trustedHeaders, ...headers },
+    });
+
+    vi.stubEnv("AUTH_MODE", "trusted-proxy-single-user");
+    vi.stubEnv("SINGLE_USER_ID", trustedUserId);
+    vi.stubEnv("TRUSTED_PROXY_TOKEN", token);
+    vi.stubEnv("TRUSTED_PROXY_ORIGIN", origin);
+    try {
+      await database.insert(tables.users).values({ id: trustedUserId, name: "Tailnet single user" }).onConflictDoNothing();
+      const deviceAResponse = await post(deviceAPush());
+      expect(deviceAResponse.status).toBe(200);
+      expect((await deviceAResponse.json()).accepted).toEqual(["trusted-method-operation", "trusted-payment-operation"]);
+
+      const deviceBResponse = await pull(deviceBPull());
+      expect(deviceBResponse.status).toBe(200);
+      const deviceBBody = (await deviceBResponse.json()) as { changes: Array<{ type: string; entityId: string; payload: { amount?: number; title?: string } }> };
+      expect(deviceBBody.changes).toEqual([
+        expect.objectContaining({ type: "PAYMENT_METHOD_UPSERT", entityId: "trusted-method" }),
+        expect.objectContaining({ type: "PAYMENT_UPSERT", entityId: "trusted-payment", payload: expect.objectContaining({ amount: 2750, title: "端末Aの支払い" }) }),
+      ]);
+
+      const [persisted] = await database.select().from(tables.payments)
+        .where(and(eq(tables.payments.userId, trustedUserId), eq(tables.payments.id, "trusted-payment")));
+      expect(persisted).toMatchObject({ userId: trustedUserId, amount: 2750, title: "端末Aの支払い" });
+      expect((await post(deviceAPush({ "X-Payment-Manager-Proxy-Token": "" }))).status).toBe(403);
+      expect((await post(deviceAPush({ Origin: "https://evil.example" }))).status).toBe(403);
+      expect((await post(deviceAPush({ "X-Payment-Manager-Expected-User": "another-user" }))).status).toBe(409);
+      expect((await pull(deviceBPull({ "Sec-Fetch-Site": "cross-site" }))).status).toBe(403);
+    } finally {
+      await database.delete(tables.users).where(eq(tables.users.id, trustedUserId));
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("synchronizes two device cursors through update and delete conflicts", async () => {
     const initialMethod = {
       id: "operation-two-device-method",

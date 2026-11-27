@@ -19,6 +19,7 @@
 | PostgreSQL/Drizzle | 実装済み | `src/server/db/schema.ts` と `drizzle/` にAuth.jsのユーザー/アカウント、および所有ユーザー、グループ、支払い方法、支払い、ユーザー設定の定義を追加 |
 | 自動テスト/CI | 実装済み | IndexedDBの主要フローとLWWのdelete/update競合をVitestで検証し、Playwrightで主要画面のCRUD、検索/集計、Export/Import、オフライン/PWA、Group・Payment Method履歴、認証済みoffline→online同期を検証。GitHub Actionsでmise経由のinstall / typecheck / test / build / Chromium E2Eを実行。PostgreSQL統合テストでは2デバイスのcursor同期も確認 |
 | Docker Composeデプロイ（Issue #36） | 構成・CI実装済み（LXC現地検証待ち） | Node 26/pnpm 11のstandalone runner、PostgreSQL 17永続Volume、明示的なmigrate、バックアップ/復元手順、DockerスモークCI、非特権LXC手順（`docs/deployment-lxc.md`）。実際のProxmox構築やOAuth/HTTPS公開は別作業 |
+| Tailscale限定の単一ユーザー同期（Issue #38） | 実装済み（実Tailnet現地検証待ち） | 明示的な`AUTH_MODE=trusted-proxy-single-user`、固定UUIDとbootstrap、秘密ヘッダー＋Origin/Fetch Metadata検証、Push/Pull共通principal、端末側identity取得、同期所有者照合、初回確認、Compose環境変数、Nginx/DNS-01/Split DNS手順 |
 
 ## 重要な実装判断
 
@@ -33,7 +34,8 @@
 - Exportは設定画面でIndexedDBの現在状態から未削除Paymentのスナップショットを作り、通信せずにブラウザのダウンロードを開始する。CSVはUTF-8 BOM付きで全セルを引用し、カンマ・改行・ダブルクォートを含む名目を壊さない。JSONは`schemaVersion: 1`とID、日時、表示用のGroup・Payment Method名を含め、将来のImportで扱える構造にする。Exportは読み取りだけで、EntityやOutboxを変更しない。
 - JSON Importはファイル選択後にschemaVersion、必須フィールド、ID、金額、日時、Group・Payment Method参照をランタイム検証し、件数プレビューと明示的な確認操作を要求する。同じIDは`updatedAt`が新しいデータだけを採用し、論理削除も通常更新と同じLWW対象にする。採用したEntityとOutboxは同一IndexedDB readwrite transactionで保存し、途中失敗時に部分適用を残さない。取り込んだローカル変更は既存の同期イベント経由で認証済み同期の対象になる。初期の`schemaVersion: 1`でEntity配列を持たない旧JSONも、Payment内の表示名から参照Entityを復元して取り込む。表示名が不足・衝突する旧データは参照切れを残さないため拒否する。
 - 検索の金額条件は入力文字列をそのまま検証し、指数表記などの不正値を別の数値へ変換しない。任意期間が未入力または逆順の間は集計値を有効な値として表示せず、今月・前月の基準日はページ滞在中も定期的に更新する。CSVの自由入力文字列が`=`, `+`, `-`, `@`で始まる場合は、通常の引用処理を維持したままアポストロフィを付けて表計算ソフトの数式評価を防ぐ。
-- 認証はAuth.js + Google OAuthとし、アプリ内の`users.id`はAuth.js/Drizzleが生成するUUIDとする。Googleの安定したsubject claimは`accounts`の`provider`と`provider_account_id`で保持する。認証に必要な環境変数またはPostgreSQLが揃わない場合はproviderを有効化せず、Local Onlyで利用できるようにする。
+- 認証方式は既定`AUTH_MODE=auto`で従来のAuth.js + Google OAuth（または認証設定不足時のLocal Only）を維持する。明示`google`は設定不備時に起動を拒否し、`local-only`はサーバー同期を無効にする。Google OAuthの`users.id`はAuth.js/Drizzleが生成するUUIDで、Googleのstable subjectは`accounts.provider`と`accounts.provider_account_id`の組み合わせで保持する。
+- Issue #38の`trusted-proxy-single-user`はTailnet限定HTTPSプロキシの秘密ヘッダー、固定Origin、Fetch metadata、DB内の事前bootstrap済みUUIDを必須とする。OAuth/E2E資格情報との併用を拒否し、設定不備を匿名同期へフォールバックしない。Push/Pullは共通のサーバー由来principalを使い、端末からの期待ユーザーIDは本人確認には使わず、所有者変更検出のためだけに照合する。Web画面は`/api/sync/identity`で現在のprincipalを取得し、初回確認・owner mismatch・オフライン時のOutbox保持を継続する。
 - `users.email`は既存の同期用ユーザー行を壊さないようnullableで追加する。認証情報から正しくbackfillできる移行を定義できるまでは、推測値で埋めたり`NOT NULL`へ変更したりしない。
 - セッションはJWT方式とし、Issue #1ではOAuthアカウントリンク用の`accounts`だけを追加する。Push/Pull、所有権チェック、Outboxの初回移行は認証済み同期の別段階で実装する。
 - 初回ログインでは既存のIndexedDBデータを削除・統合せず、確認ボタンを押すまでPushもしない。確認後は既存Outboxを認証済みPushの送信対象とし、失敗時は端末に保持する。サーバーデータとの明示的な統合操作は後続段階で追加する。
@@ -49,5 +51,5 @@
 
 ## 残りの実装単位
 
-1. 非特権LXCでのDocker互換性とストレージドライバを現地確認し、HTTPSリバースプロキシ・DNS・Google OAuthの実設定を行う。
-2. PostgreSQL論理バックアップの定期実行・LXC外保存先・復元演習を構築し、実Googleアカウントと実端末でLocal First/同期を運用検証する。
+1. 非特権LXCでのDocker互換性とストレージドライバを現地確認し、Tailscale・HTTPSリバースプロキシ・Split DNS・DNS-01証明書・Tailnet ACLを実設定して端末からのアクセス制御を検証する。
+2. PostgreSQL論理バックアップの定期実行・LXC外保存先・復元演習を構築し、実端末2台で初回確認、オフライン復帰、所有者不一致、同期結果を運用検証する。Google OAuth運用を選ぶ場合は実Googleアカウントでも検証する。

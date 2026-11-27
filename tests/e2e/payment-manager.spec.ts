@@ -15,6 +15,7 @@ async function registerPayment(page: Page, amount: string, title: string, method
 
 async function signInForSync(page: Page) {
   await openHome(page);
+  await expect(page.locator(".network-status")).toHaveText("ログイン待ち", { timeout: 15_000 });
   await page.getByRole("button", { name: "E2Eテストユーザーでログイン", exact: true }).click();
   await expect(page.getByRole("button", { name: "ログアウト", exact: true })).toBeVisible({ timeout: 15_000 });
   await page.reload();

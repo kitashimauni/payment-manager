@@ -31,6 +31,16 @@ docker compose --env-file .env.docker up -d --no-build --wait app
 
 ポートは初期状態では `127.0.0.1:3000` にのみ公開され、DBのポートはホストに公開しません。既存リバースプロキシからのHTTPS公開とGoogle OAuthは別途設定が必要です。**実運用に入る前に** [LXCデプロイ・更新・バックアップ/復元手順](docs/deployment-lxc.md) を確認してください。通常の更新で `docker compose down -v` は実行しません。
 
+## Tailscale限定・ログインなしの同期（Issue #38）
+
+`AUTH_MODE=trusted-proxy-single-user` を明示すると、Googleログインを使わず、**Tailnet参加端末だけ**が同じ固定ユーザーIDで同期できます。Local Only と Google OAuth の既存モードも利用できます。これはパスワード不要の公開サービスではありません。**Tailscaleのアクセス制御・同一LXC内の信頼済みHTTPSプロキシ・秘密ヘッダー**が認証境界になります。
+
+1. `.env.docker` に `AUTH_MODE=trusted-proxy-single-user`、`SINGLE_USER_ID`（固定UUID）、`TRUSTED_PROXY_TOKEN`（32バイト以上の乱数をbase64url化）、`TRUSTED_PROXY_ORIGIN`（`https://payments.example.com` のような完全なHTTPS Origin）を設定。Google/E2Eの認証変数は空にする。
+2. DB migrationの後、`docker compose --env-file .env.docker run --rm migrate node scripts/bootstrap-single-user.mjs` で固定ユーザーを作成。既存ユーザーのIDを自動転用・統合しない。
+3. 同じLXC内のリバースプロキシのみから `127.0.0.1:3000` に接続し、外部からの秘密ヘッダーを**必ず上書き**する。HTTPSの443はTailscale IPにのみbindし、Split DNSとDNS-01証明書、Tailnet ACLを設定する。
+
+詳細な [Tailscale + Nginx設定・疎通試験・復旧手順](docs/deployment-lxc.md#tailscale限定の単一ユーザー同期-issue-38) を必ず確認してください。端末で初めて同期する時は明示確認が必要で、既存の別IDに紐づく端末は自動的に切り替わりません。
+
 ## 環境変数
 
 `.env.example`を`.env.local`へコピーして使用します。Local Firstの画面操作には認証用環境変数は必要ありません。
@@ -38,6 +48,10 @@ docker compose --env-file .env.docker up -d --no-build --wait app
 | 変数 | 用途 | 必須 |
 | --- | --- | --- |
 | `DATABASE_URL` | Drizzleのマイグレーション、認証、同期API | DBを使う場合 |
+| `AUTH_MODE` | `auto`（従来互換）/ `google` / `local-only` / `trusted-proxy-single-user` | 省略時は`auto` |
+| `SINGLE_USER_ID` | trusted modeの固定UUID | trusted mode |
+| `TRUSTED_PROXY_TOKEN` | プロキシが付与する32バイト以上の秘密トークン（base64url） | trusted mode |
+| `TRUSTED_PROXY_ORIGIN` | 端末が使う厳密なHTTPS Origin（末尾スラッシュなし） | trusted mode |
 | `AUTH_SECRET` | Auth.jsのJWT署名 | Googleログイン / CIの同期E2E時 |
 | `AUTH_GOOGLE_ID` | Google OAuth Client ID | Googleログイン時 |
 | `AUTH_GOOGLE_SECRET` | Google OAuth Client Secret | Googleログイン時 |
@@ -45,7 +59,7 @@ docker compose --env-file .env.docker up -d --no-build --wait app
 | `SYNC_TEST_DATABASE_URL` | PostgreSQL統合テストの接続先 | 統合テスト時 |
 | `BASE_URL` | Playwright E2Eの接続先 | 接続先を変更する場合 |
 
-`AUTH_SECRET`、`AUTH_GOOGLE_ID`、`AUTH_GOOGLE_SECRET`、`DATABASE_URL`は、Googleログインを有効にする場合にすべて設定してください。未設定の変数がある場合はLocal Onlyで起動します。
+`AUTH_MODE=auto`（既定）の場合、`AUTH_SECRET`、`AUTH_GOOGLE_ID`、`AUTH_GOOGLE_SECRET`、`DATABASE_URL`がすべて揃ったときだけGoogleログインを有効にします。不足時はLocal Onlyです。`AUTH_MODE=google` または `trusted-proxy-single-user` の設定不備は**起動エラー**とし、匿名同期へ切り替わりません。
 
 ## 実装済みMVP
 
