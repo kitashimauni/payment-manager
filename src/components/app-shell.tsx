@@ -102,7 +102,7 @@ export function AppShell({ children, authStatus }: { children: React.ReactNode; 
           </div>
         </header>
         <SyncMigrationPrompt />
-        <main className="page-container">{children}</main>
+        <main className={pathname === "/" ? "page-container home-page-container" : "page-container"}>{children}</main>
         <nav className="bottom-nav" aria-label="メインナビゲーション">
           {navigation.map((item) => {
             const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);

@@ -15,7 +15,6 @@ export type PaymentSummaryRow = {
 export type PaymentSummary = {
   total: number;
   count: number;
-  averageAmount: number;
   byGroup: PaymentSummaryRow[];
   byPaymentMethod: PaymentSummaryRow[];
 };
@@ -93,7 +92,6 @@ export function summarizePayments(
   return {
     total,
     count,
-    averageAmount: count === 0 ? 0 : Math.round(total / count),
     byGroup: sortRows(Array.from(groupRows.values())),
     byPaymentMethod: sortRows(Array.from(methodRows.values())),
   };

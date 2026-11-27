@@ -29,7 +29,7 @@ const paymentMethods: PaymentMethod[] = [
 ];
 
 describe("payment summary", () => {
-  it("calculates the total, count, and average for the selected month", () => {
+  it("calculates the total and count for the selected month", () => {
     const payments = [
       payment("in-month-a", { amount: 1000, paidAt: "2026-09-01T12:00:00.000Z" }),
       payment("in-month-b", { amount: 2000, paidAt: "2026-09-30T12:00:00.000Z" }),
@@ -40,7 +40,6 @@ describe("payment summary", () => {
     expect(summarizePayments(payments, groups, paymentMethods, { fromDate: "2026-09-01", toDate: "2026-09-30" })).toMatchObject({
       total: 3000,
       count: 2,
-      averageAmount: 1500,
     });
   });
 
