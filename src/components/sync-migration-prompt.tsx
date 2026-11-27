@@ -1,6 +1,5 @@
 "use client";
 
-import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import {
   confirmSyncMigration,
@@ -9,13 +8,10 @@ import {
   trySync,
 } from "@/lib/db";
 import type { SyncState } from "@/lib/types";
-
-function displayName(session: { user?: { name?: string | null; email?: string | null } }) {
-  return session.user?.name ?? session.user?.email ?? "このアカウント";
-}
+import { useSyncIdentity } from "./sync-identity-provider";
 
 export function SyncMigrationPrompt() {
-  const { data: session, status } = useSession();
+  const identity = useSyncIdentity();
   const [syncState, setSyncState] = useState<SyncState | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,9 +35,9 @@ export function SyncMigrationPrompt() {
     };
   }, []);
 
-  if (status !== "authenticated" || !session?.user?.id || !syncState) return null;
+  if (identity.status !== "authenticated" || !syncState) return null;
 
-  const userId = session.user.id;
+  const userId = identity.userId;
   const ownerMismatch = syncState.syncOwnerUserId !== null && syncState.syncOwnerUserId !== userId;
   if (syncState.migrationConfirmed && !ownerMismatch) return null;
 
@@ -73,7 +69,7 @@ export function SyncMigrationPrompt() {
   return (
     <section className="sync-migration-banner" aria-live="polite">
       <div>
-        <strong>{displayName(session)}で同期を開始しますか？</strong>
+        <strong>{identity.displayName}で同期を開始しますか？</strong>
         <p>この端末の未送信データをこのアカウントへ送信します。データの削除や統合は行いません。</p>
       </div>
       <button type="button" className="small-button auth-button" onClick={() => void confirm()} disabled={saving}>

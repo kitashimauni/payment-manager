@@ -120,6 +120,25 @@ jobs:
           docker compose --env-file .env.docker up -d --no-build --wait app
           curl --fail --silent --show-error http://127.0.0.1:3000/ -o /dev/null
 
+      - name: Smoke-test explicit trusted proxy mode without OAuth
+        run: |
+          set -euo pipefail
+          token="$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')"
+          sed -i 's/^AUTH_MODE=.*/AUTH_MODE=trusted-proxy-single-user/' .env.docker
+          sed -i 's/^SINGLE_USER_ID=.*/SINGLE_USER_ID=8ed64442-9980-43c3-9289-e509032b6d1c/' .env.docker
+          sed -i "s/^TRUSTED_PROXY_TOKEN=.*/TRUSTED_PROXY_TOKEN=$token/" .env.docker
+          sed -i 's|^TRUSTED_PROXY_ORIGIN=.*|TRUSTED_PROXY_ORIGIN=https://payments.example.com|' .env.docker
+          docker compose --env-file .env.docker run --rm migrate node scripts/bootstrap-single-user.mjs
+          docker compose --env-file .env.docker up -d --force-recreate --no-build --wait app
+          unauthenticated_status="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/sync/identity)"
+          test "$unauthenticated_status" = 403
+          trusted_response="$(curl --fail --silent --show-error -H "X-Payment-Manager-Proxy-Token: $token" -H 'Sec-Fetch-Site: same-origin' http://127.0.0.1:3000/api/sync/identity)"
+          echo "$trusted_response" | grep -q '8ed64442-9980-43c3-9289-e509032b6d1c'
+          untrusted_origin_status="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "X-Payment-Manager-Proxy-Token: $token" -H 'Origin: https://evil.example' -H 'Content-Type: application/json' -d '{"operations":[]}' http://127.0.0.1:3000/api/sync/push)"
+          test "$untrusted_origin_status" = 403
+          trusted_push_status="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "X-Payment-Manager-Proxy-Token: $token" -H 'X-Payment-Manager-Expected-User: 8ed64442-9980-43c3-9289-e509032b6d1c' -H 'Origin: https://payments.example.com' -H 'Content-Type: application/json' -d '{"operations":[]}' http://127.0.0.1:3000/api/sync/push)"
+          test "$trusted_push_status" = 200
+
       - name: Show container state on failure
         if: failure()
         run: docker compose --env-file .env.docker ps -a

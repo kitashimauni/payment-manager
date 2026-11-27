@@ -1,4 +1,4 @@
-import { auth, authEnabled, e2eAuthEnabled, signIn, signOut } from "@/auth";
+import { auth, authEnabled, e2eAuthEnabled, signIn, signOut, trustedSingleUserEnabled } from "@/auth";
 
 async function signInWithGoogle() {
   "use server";
@@ -17,6 +17,7 @@ async function signInWithE2e() {
 }
 
 export async function AuthStatus() {
+  if (trustedSingleUserEnabled) return null;
   if (!authEnabled) {
     return <span className="auth-status local-only">Local Only</span>;
   }

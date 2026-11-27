@@ -1,6 +1,6 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { auth, authEnabled } from "@/auth";
+import { resolveSyncPrincipal } from "@/server/sync/principal";
 import { db } from "@/server/db/client";
 import { groups, payments, paymentMethods, userSettings, users } from "@/server/db/schema";
 import {
@@ -107,21 +107,13 @@ function pullError(message: string, status: number) {
 
 export async function GET(request: Request) {
   const database = db;
-  if (!authEnabled || !database) {
+  if (!database) {
     return pullError("server sync is not configured", 503);
   }
 
-  let session;
-  try {
-    session = await auth();
-  } catch {
-    return pullError("authentication is unavailable", 503);
-  }
-
-  const userId = session?.user?.id;
-  if (!userId) {
-    return pullError("authentication is required", 401);
-  }
+  const principal = await resolveSyncPrincipal(request, true);
+  if (!principal.ok) return pullError(principal.reason, principal.status);
+  const userId = principal.principal.userId;
 
   let cursor: PullCursor | null;
   try {

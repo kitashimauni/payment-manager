@@ -21,6 +21,7 @@ FROM deps AS migrate
 COPY drizzle.config.ts tsconfig.json ./
 COPY drizzle ./drizzle
 COPY src/server/db/schema.ts ./src/server/db/schema.ts
+COPY scripts/bootstrap-single-user.mjs ./scripts/bootstrap-single-user.mjs
 CMD ["pnpm", "db:migrate"]
 
 FROM node:26.13.1-bookworm-slim AS runner

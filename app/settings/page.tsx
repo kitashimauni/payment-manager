@@ -1,15 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
 import { getSettings, getSyncState, listGroups, listOutbox, listPaymentMethods, listPayments, seedDefaultData, subscribeToLocalDataChanges, subscribeToOutboxChanges, trySync } from "@/lib/db";
 import type { Group, Payment, PaymentMethod, SyncState, UserSettings } from "@/lib/types";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
 import { PaymentExport } from "@/components/payment-export";
 import { PaymentImport } from "@/components/payment-import";
+import { useSyncIdentity } from "@/components/sync-identity-provider";
 
 export default function SettingsPage() {
-  const { data: session, status: sessionStatus } = useSession();
+  const identity = useSyncIdentity();
   const [pending, setPending] = useState(0);
   const [syncState, setSyncState] = useState<SyncState | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -17,7 +17,7 @@ export default function SettingsPage() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [syncMessage, setSyncMessage] = useState("サーバー接続を確認中…");
-  const syncUserId = sessionStatus === "authenticated" ? session.user?.id ?? null : null;
+  const syncUserId = identity.status === "authenticated" ? identity.userId : null;
 
   async function refresh() {
     await seedDefaultData();
@@ -56,7 +56,7 @@ export default function SettingsPage() {
     <PaymentImport />
     <section className="panel" style={{ marginTop: 16 }}>
       <div className="panel-heading"><h2>同期ステータス</h2><button className="small-button" type="button" onClick={() => void sync()}>今すぐ確認</button></div>
-      <div className="sync-note"><strong>{pending > 0 ? `${pending}件の変更が同期待ち` : "同期待ちの変更はありません"}</strong><br />{syncMessage}{syncState?.lastSyncedAt ? `（最終確認 ${new Date(syncState.lastSyncedAt).toLocaleString("ja-JP")}）` : ""}</div>
+      <div className="sync-note"><strong>{pending > 0 ? `${pending}件の変更が同期待ち` : "同期待ちの変更はありません"}</strong><br />{identity.status === "unavailable" ? "同期サーバーに接続できません。端末内の記録は利用できます。" : syncMessage}{syncState?.lastSyncedAt ? `（最終確認 ${new Date(syncState.lastSyncedAt).toLocaleString("ja-JP")}）` : ""}</div>
       <p className="helper-text" style={{ marginTop: 14, marginBottom: 0 }}>支払いの登録・編集は通信を待たず端末へ保存されます。同期サーバーを接続した環境では、オンライン復帰時にOutboxから送信されます。</p>
     </section>
     <section className="panel" style={{ marginTop: 16 }}><div className="panel-heading"><h2>このMVPについて</h2></div><p className="helper-text" style={{ marginBottom: 0 }}>家計簿の細かな分類ではなく、支払った瞬間のログに集中します。名目とグループは必要なときだけ追加できます。</p></section>
