@@ -259,7 +259,6 @@ export default function PaymentsPage() {
           <div className="summary-metrics">
             <div className="summary-metric summary-metric-primary"><span className="summary-metric-label">合計額</span><strong>{formatYen(summary.total)}</strong></div>
             <div className="summary-metric"><span className="summary-metric-label">支払い件数</span><strong>{summary.count}件</strong></div>
-            <div className="summary-metric"><span className="summary-metric-label">平均支払額</span><strong>{formatYen(summary.averageAmount)}</strong></div>
           </div>
           <div className="summary-breakdowns">
             <SummaryBreakdown title="グループ別" rows={summary.byGroup} />

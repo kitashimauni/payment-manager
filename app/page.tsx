@@ -123,14 +123,7 @@ export default function HomePage() {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <div className="eyebrow">Quick capture</div>
-          <h1>支払いを、すぐ残す。</h1>
-          <p className="lede">金額と方法だけで、数秒で記録できます。</p>
-        </div>
-      </div>
-
+      <h1 className="visually-hidden">支払いを記録</h1>
       {error ? <div className="error-banner">{error}</div> : null}
 
       <div className="home-grid">
@@ -158,7 +151,6 @@ export default function HomePage() {
               pattern="[0-9]*"
               placeholder="0"
               aria-label="金額"
-              autoFocus
             />
           </div>
 
@@ -182,6 +174,7 @@ export default function HomePage() {
                   type="button"
                   key={method.id}
                   className={selectedMethodId === method.id ? "method-button selected" : "method-button"}
+                  aria-pressed={selectedMethodId === method.id}
                   onClick={() => setSelectedMethodId(method.id)}
                 >
                   {method.name}

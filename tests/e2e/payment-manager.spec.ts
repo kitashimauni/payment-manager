@@ -2,7 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function openHome(page: Page) {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "支払いを、すぐ残す。" })).toBeVisible();
+  await expect(page.getByLabel("金額", { exact: true })).toBeVisible();
+  await expect(page.getByText("Quick capture", { exact: true })).toHaveCount(0);
 }
 
 async function registerPayment(page: Page, amount: string, title: string, method = "現金") {
@@ -62,6 +63,36 @@ test("supports payment registration, editing, and logical deletion", async ({ pa
   await expect(page.locator(".payment-row").filter({ hasText: "E2Eランチ編集" })).toHaveCount(0);
 });
 
+test("keeps the amount field unfocused until explicitly selected on the record tab", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openHome(page);
+  const amount = page.getByLabel("金額", { exact: true });
+  await expect(amount).not.toBeFocused();
+
+  await page.getByRole("link", { name: "履歴", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "支払い履歴" })).toBeVisible();
+  await page.getByRole("link", { name: "記録", exact: true }).click();
+  await expect(amount).toBeVisible();
+  await expect(amount).not.toBeFocused();
+
+  await amount.click();
+  await expect(amount).toBeFocused();
+  await amount.fill("430");
+  const cash = page.getByRole("button", { name: "現金", exact: true });
+  await cash.click();
+  await expect(cash).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "支払い登録" }).click();
+  await expect(page.getByRole("status")).toContainText("登録しました");
+});
+
+test("shows an app-colored focus indicator during keyboard navigation", async ({ page }) => {
+  await openHome(page);
+  await page.keyboard.press("Tab");
+  await expect(page.locator(":focus-visible")).toHaveCount(1);
+  expect(await page.locator(":focus-visible").evaluate((element) => getComputedStyle(element).outlineStyle)).toBe("solid");
+  expect(await page.locator(":focus-visible").evaluate((element) => getComputedStyle(element).outlineColor)).toBe("rgb(184, 62, 50)");
+});
+
 test("filters history and shows the current-month summary", async ({ page }) => {
   await openHome(page);
   await registerPayment(page, "1200", "E2Eコーヒー");
@@ -70,6 +101,8 @@ test("filters history and shows the current-month summary", async ({ page }) => 
   await page.getByRole("link", { name: "履歴", exact: true }).click();
   await expect(page.getByRole("heading", { name: "支払い集計" })).toBeVisible();
   await expect(page.locator(".summary-metric-primary")).toContainText("￥3,700");
+  await expect(page.getByText("支払い件数", { exact: true })).toBeVisible();
+  await expect(page.getByText("平均支払額", { exact: true })).toHaveCount(0);
   await page.getByLabel("名目で検索").fill("E2Eコーヒー");
   await expect(page.locator(".search-result strong")).toHaveText("1");
   await expect(page.locator(".payment-row").filter({ hasText: "E2Eコーヒー" })).toHaveCount(1);
@@ -147,7 +180,7 @@ test("keeps local payment registration available offline and navigates cached PW
   await page.goto("/payments");
   await expect(page.getByRole("heading", { name: "支払い履歴" })).toBeVisible();
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "支払いを、すぐ残す。" })).toBeVisible();
+  await expect(page.getByLabel("金額", { exact: true })).toBeVisible();
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
   });
