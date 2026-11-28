@@ -326,6 +326,19 @@ describe("IndexedDB entity/outbox atomicity", () => {
     expect((await listPaymentMethods()).find((method) => method.id === created.id)?.name).toBe("連続編集C");
   });
 
+  it("does not restore tombstoned payment methods as if they were ordinary archives", async () => {
+    const timestamp = new Date().toISOString();
+    const tombstoned: PaymentMethod = {
+      id: "tombstoned-payment-method", name: "削除済みの方法", sortOrder: 99999,
+      isActive: false, createdAt: timestamp, updatedAt: timestamp, deletedAt: timestamp,
+    };
+    await savePaymentMethod(tombstoned);
+
+    await expect(setPaymentMethodActive(tombstoned.id, true)).rejects.toThrow("支払い方法が見つかりません");
+    expect((await listPaymentMethods(true)).find((method) => method.id === tombstoned.id)).toEqual(tombstoned);
+    expect((await listPaymentMethods()).find((method) => method.id === tombstoned.id)).toBeUndefined();
+  });
+
   it("does not push local data before migration confirmation", async () => {
     await savePayment(payment("sync-confirmation-gate"));
     const fetchMock = vi.spyOn(globalThis, "fetch");

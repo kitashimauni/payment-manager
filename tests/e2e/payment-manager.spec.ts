@@ -363,6 +363,60 @@ test("shows failed method saves without clearing an unsaved name", async ({ page
   await expect(page.locator(".error-banner[role='alert']")).toContainText("E2E simulated save failure");
   await expect(method.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金保存失敗テスト");
   await expect(method.getByText("未保存", { exact: true })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
   await page.reload();
-  await expect(page.getByLabel("現金の名前", { exact: true })).toHaveValue("現金");
+  await expect(page.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金保存失敗テスト");
+  await page.getByRole("button", { name: "現金の名前を保存" }).click();
+  await expect(page.getByRole("textbox", { name: "現金保存失敗テストの名前", exact: true })).toBeVisible();
+});
+
+test("confirms navigation when a payment method name has unsaved changes", async ({ page }) => {
+  await page.goto("/settings/payment-methods");
+  await expect(page.getByRole("heading", { name: "支払い方法" })).toBeVisible();
+  await page.getByRole("textbox", { name: "現金の名前", exact: true }).fill("現金の未保存下書き");
+  await expect(page.getByText("未保存の名前があります。", { exact: false })).toBeVisible();
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("変更を破棄して移動しますか？");
+    await dialog.dismiss();
+  });
+  await page.getByRole("link", { name: "設定に戻る" }).click();
+  await expect(page).toHaveURL(/\/settings\/payment-methods$/);
+  await expect(page.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金の未保存下書き");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("link", { name: "履歴", exact: true }).click();
+  await expect(page).toHaveURL(/\/payments$/);
+  await page.goto("/settings/payment-methods");
+  await expect(page.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金");
+});
+
+test("does not offer restoration for a deleted payment method", async ({ page }) => {
+  await page.goto("/settings/payment-methods");
+  await expect(page.getByRole("heading", { name: "支払い方法" })).toBeVisible();
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("payment-manager-local");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const timestamp = new Date().toISOString();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("paymentMethods", "readwrite");
+      transaction.objectStore("paymentMethods").put({
+        id: "e2e-deleted-method", name: "E2E削除済み方法", sortOrder: 10000,
+        isActive: false, createdAt: timestamp, updatedAt: timestamp, deletedAt: timestamp,
+      });
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error);
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+    window.dispatchEvent(new CustomEvent("payment-manager:local-data-changed", {
+      detail: { kind: "paymentMethods", entityId: "e2e-deleted-method", source: "local" },
+    }));
+  });
+  const row = page.locator(".archive-list .method-item").filter({ hasText: "E2E削除済み方法" });
+  await expect(row).toContainText("削除済み（再表示不可）");
+  await expect(row.getByRole("button", { name: "再表示" })).toHaveCount(0);
 });

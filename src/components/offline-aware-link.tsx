@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { warmOfflineRoutes } from "@/lib/pwa";
+import { useNavigationBlocker } from "./navigation-blocker";
 
 export function OfflineAwareLink({
   href,
@@ -15,6 +16,7 @@ export function OfflineAwareLink({
   className?: string;
 }) {
   const linkRef = useRef<HTMLAnchorElement>(null);
+  const { confirmLeave } = useNavigationBlocker();
 
   useEffect(() => {
     const link = linkRef.current;
@@ -43,9 +45,13 @@ export function OfflineAwareLink({
       href={href}
       ref={linkRef}
       className={className}
+      onNavigate={(event) => {
+        if (!confirmLeave()) event.preventDefault();
+      }}
       onClick={(event) => {
         if (typeof navigator !== "undefined" && !navigator.onLine) {
           event.preventDefault();
+          if (!confirmLeave()) return;
           window.location.assign(href);
         }
       }}

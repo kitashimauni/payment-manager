@@ -7,8 +7,10 @@ import {
 } from "@/lib/db";
 import type { PaymentMethod } from "@/lib/types";
 import { OfflineAwareLink } from "@/components/offline-aware-link";
+import { useNavigationBlocker } from "@/components/navigation-blocker";
 
 type Notice = { kind: "success" | "error"; text: string };
+const DRAFT_STORAGE_KEY = "payment-manager:method-name-drafts";
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "処理に失敗しました。もう一度お試しください。";
@@ -18,15 +20,71 @@ export default function PaymentMethodsPage() {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [name, setName] = useState("");
   const [draftNames, setDraftNames] = useState<Record<string, string>>({});
+  const [draftsHydrated, setDraftsHydrated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const latestRefresh = useRef(0);
   const operationInFlight = useRef(false);
+  const { setIsBlocked, setDiscardHandler } = useNavigationBlocker();
 
   const activeMethods = useMemo(() => methods.filter((method) => method.isActive && !method.deletedAt), [methods]);
   const archivedMethods = useMemo(() => methods.filter((method) => !method.isActive || method.deletedAt), [methods]);
   const hasUnsavedChanges = activeMethods.some((method) => draftNames[method.id] !== undefined && draftNames[method.id] !== method.name);
+
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem(DRAFT_STORAGE_KEY);
+      if (stored) {
+        const parsed: unknown = JSON.parse(stored);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const valid = Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length <= 40);
+          setDraftNames(Object.fromEntries(valid));
+        }
+      }
+    } catch {
+      // Storage can be unavailable, or contain a stale/corrupt draft.
+    } finally {
+      setDraftsHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftsHydrated) return;
+    try {
+      if (Object.keys(draftNames).length === 0) window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+      else window.sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftNames));
+    } catch {
+      // Editing remains possible when session storage is disabled.
+    }
+  }, [draftNames, draftsHydrated]);
+
+  useEffect(() => {
+    setIsBlocked(hasUnsavedChanges);
+    return () => setIsBlocked(false);
+  }, [hasUnsavedChanges, setIsBlocked]);
+
+  useEffect(() => {
+    setDiscardHandler(() => {
+      try {
+        window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+      } catch {
+        // A blocked storage API must not prevent an explicit discard.
+      }
+      setDraftNames({});
+    });
+    return () => setDiscardHandler(null);
+  }, [setDiscardHandler]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   const refresh = useCallback(async () => {
     const sequence = ++latestRefresh.current;
@@ -142,7 +200,7 @@ export default function PaymentMethodsPage() {
         </div>;
       })}
     </section>
-    {archivedMethods.length > 0 ? <section className="method-panel archive-list" style={{ marginTop: 16 }}><div className="panel-heading"><h2>アーカイブ</h2><span className="helper-text">履歴の参照用に保持</span></div>{archivedMethods.map((method) => <div className="method-item" key={method.id}><span>{method.name}</span><button className="small-button ghost" type="button" disabled={hasUnsavedChanges || pending !== null} onClick={() => void runOperation("再表示", "支払い方法を再表示しました。", () => setPaymentMethodActive(method.id, true))}>再表示</button></div>)}</section> : null}
+    {archivedMethods.length > 0 ? <section className="method-panel archive-list" style={{ marginTop: 16 }}><div className="panel-heading"><h2>アーカイブ</h2><span className="helper-text">履歴の参照用に保持</span></div>{archivedMethods.map((method) => <div className="method-item" key={method.id}><span>{method.name}</span>{method.deletedAt ? <span className="helper-text">削除済み（再表示不可）</span> : <button className="small-button ghost" type="button" disabled={hasUnsavedChanges || pending !== null} onClick={() => void runOperation("再表示", "支払い方法を再表示しました。", () => setPaymentMethodActive(method.id, true))}>再表示</button>}</div>)}</section> : null}
     <p className="helper-text" style={{ marginTop: 16 }}>履歴から参照されている支払い方法は物理削除せず、アーカイブして残します。</p>
   </div>;
 }
