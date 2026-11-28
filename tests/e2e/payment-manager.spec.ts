@@ -324,7 +324,7 @@ test("saves a renamed method explicitly and keeps its reordered position after r
   await page.getByRole("button", { name: "＋ 追加", exact: true }).click();
   const row = page.locator(".method-item").filter({ has: page.getByLabel("E2E並び替え前の名前", { exact: true }) });
   await expect(row).toBeVisible();
-  await row.getByLabel("E2E並び替え前の名前").fill("E2E並び替え後");
+  await row.getByRole("textbox", { name: "E2E並び替え前の名前", exact: true }).fill("E2E並び替え後");
   await expect(row.getByRole("button", { name: "上へ" })).toBeDisabled();
   await expect(row.getByText("未保存", { exact: true })).toBeVisible();
   await row.getByRole("button", { name: "E2E並び替え前の名前を保存" }).click();
@@ -351,7 +351,7 @@ test("shows failed method saves without clearing an unsaved name", async ({ page
   await page.goto("/settings/payment-methods");
   await expect(page.getByRole("heading", { name: "支払い方法" })).toBeVisible();
   const method = page.locator(".method-item").filter({ has: page.getByLabel("現金の名前", { exact: true }) });
-  await method.getByLabel("現金の名前").fill("現金保存失敗テスト");
+  await method.getByRole("textbox", { name: "現金の名前", exact: true }).fill("現金保存失敗テスト");
   await page.evaluate(() => {
     const original = IDBObjectStore.prototype.add;
     IDBObjectStore.prototype.add = function (value, key) {
@@ -361,7 +361,7 @@ test("shows failed method saves without clearing an unsaved name", async ({ page
   });
   await method.getByRole("button", { name: "現金の名前を保存" }).click();
   await expect(page.getByRole("alert")).toContainText("E2E simulated save failure");
-  await expect(method.getByLabel("現金の名前")).toHaveValue("現金保存失敗テスト");
+  await expect(method.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金保存失敗テスト");
   await expect(method.getByText("未保存", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("現金の名前", { exact: true })).toHaveValue("現金");
