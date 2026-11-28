@@ -4,6 +4,7 @@ import { AppShell } from "@/components/app-shell";
 import { AuthStatus } from "@/components/auth-status";
 import { SessionProvider } from "@/components/session-provider";
 import { SyncIdentityProvider } from "@/components/sync-identity-provider";
+import { NavigationBlockerProvider } from "@/components/navigation-blocker";
 import { authEnabled, trustedSingleUserEnabled } from "@/auth";
 
 export const metadata: Metadata = {
@@ -31,7 +32,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         <SessionProvider enabled={authEnabled}>
           <SyncIdentityProvider enabled={authEnabled || trustedSingleUserEnabled}>
-            <AppShell authStatus={<AuthStatus />}>{children}</AppShell>
+            <NavigationBlockerProvider>
+              <AppShell authStatus={<AuthStatus />}>{children}</AppShell>
+            </NavigationBlockerProvider>
           </SyncIdentityProvider>
         </SessionProvider>
       </body>

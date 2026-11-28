@@ -316,3 +316,107 @@ test("keeps archived payment methods visible in payment history", async ({ page 
   await page.getByRole("link", { name: "履歴", exact: true }).click();
   await expect(page.locator(".payment-row").filter({ hasText: "E2Eアーカイブ履歴" })).toContainText("E2Eアーカイブ方法");
 });
+
+test("saves a renamed method explicitly and keeps its reordered position after reload", async ({ page }) => {
+  await page.goto("/settings/payment-methods");
+  await expect(page.getByRole("heading", { name: "支払い方法" })).toBeVisible();
+  await page.getByLabel("支払い方法名", { exact: true }).fill("E2E並び替え前");
+  await page.getByRole("button", { name: "＋ 追加", exact: true }).click();
+  const row = page.locator(".method-item").filter({ has: page.getByLabel("E2E並び替え前の名前", { exact: true }) });
+  await expect(row).toBeVisible();
+  await row.getByRole("textbox", { name: "E2E並び替え前の名前", exact: true }).fill("E2E並び替え後");
+  await expect(row.getByRole("button", { name: "上へ" })).toBeDisabled();
+  await expect(row.getByText("未保存", { exact: true })).toBeVisible();
+  await row.getByRole("button", { name: "E2E並び替え前の名前を保存" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "名前を保存しました" })).toBeVisible();
+  const updatedRow = page.locator(".method-item").filter({ has: page.getByLabel("E2E並び替え後の名前", { exact: true }) });
+  await updatedRow.getByRole("button", { name: "上へ" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "表示順を保存しました" })).toBeVisible();
+
+  const currentOrder = await page.locator(".method-panel:not(.archive-list) .method-editor input").evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+  expect(currentOrder).toContain("E2E並び替え後");
+  expect(currentOrder.at(-1)).not.toBe("E2E並び替え後");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "支払い方法" })).toBeVisible();
+  const reloadedOrder = await page.locator(".method-panel:not(.archive-list) .method-editor input").evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+  expect(reloadedOrder).toEqual(currentOrder);
+
+  await page.getByRole("link", { name: "記録", exact: true }).click();
+  await expect(page.getByRole("button", { name: "E2E並び替え後", exact: true })).toBeVisible();
+  const homeMethods = await page.locator(".method-grid button").allTextContents();
+  expect(homeMethods.indexOf("E2E並び替え後")).toBe(currentOrder.indexOf("E2E並び替え後"));
+});
+
+test("shows failed method saves without clearing an unsaved name", async ({ page }) => {
+  await page.goto("/settings/payment-methods");
+  await expect(page.getByRole("heading", { name: "支払い方法" })).toBeVisible();
+  const method = page.locator(".method-item").filter({ has: page.getByLabel("現金の名前", { exact: true }) });
+  await method.getByRole("textbox", { name: "現金の名前", exact: true }).fill("現金保存失敗テスト");
+  await page.evaluate(() => {
+    const original = IDBObjectStore.prototype.add;
+    IDBObjectStore.prototype.add = function (value, key) {
+      if (this.name === "outbox") throw new Error("E2E simulated save failure");
+      return original.call(this, value, key);
+    };
+  });
+  await method.getByRole("button", { name: "現金の名前を保存" }).click();
+  await expect(page.locator(".error-banner[role='alert']")).toContainText("E2E simulated save failure");
+  await expect(method.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金保存失敗テスト");
+  await expect(method.getByText("未保存", { exact: true })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金保存失敗テスト");
+  await page.getByRole("button", { name: "現金の名前を保存" }).click();
+  await expect(page.getByRole("textbox", { name: "現金保存失敗テストの名前", exact: true })).toBeVisible();
+});
+
+test("confirms navigation when a payment method name has unsaved changes", async ({ page }) => {
+  await page.goto("/settings/payment-methods");
+  await expect(page.getByRole("heading", { name: "支払い方法" })).toBeVisible();
+  await page.getByRole("textbox", { name: "現金の名前", exact: true }).fill("現金の未保存下書き");
+  await expect(page.getByText("未保存の名前があります。", { exact: false })).toBeVisible();
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("変更を破棄して移動しますか？");
+    await dialog.dismiss();
+  });
+  await page.getByRole("link", { name: "設定に戻る" }).click();
+  await expect(page).toHaveURL(/\/settings\/payment-methods$/);
+  await expect(page.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金の未保存下書き");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("link", { name: "履歴", exact: true }).click();
+  await expect(page).toHaveURL(/\/payments$/);
+  await page.goto("/settings/payment-methods");
+  await expect(page.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金");
+});
+
+test("does not offer restoration for a deleted payment method", async ({ page }) => {
+  await page.goto("/settings/payment-methods");
+  await expect(page.getByRole("heading", { name: "支払い方法" })).toBeVisible();
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("payment-manager-local");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const timestamp = new Date().toISOString();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("paymentMethods", "readwrite");
+      transaction.objectStore("paymentMethods").put({
+        id: "e2e-deleted-method", name: "E2E削除済み方法", sortOrder: 10000,
+        isActive: false, createdAt: timestamp, updatedAt: timestamp, deletedAt: timestamp,
+      });
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error);
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+    window.dispatchEvent(new CustomEvent("payment-manager:local-data-changed", {
+      detail: { kind: "paymentMethods", entityId: "e2e-deleted-method", source: "local" },
+    }));
+  });
+  const row = page.locator(".archive-list .method-item").filter({ hasText: "E2E削除済み方法" });
+  await expect(row).toContainText("削除済み（再表示不可）");
+  await expect(row.getByRole("button", { name: "再表示" })).toHaveCount(0);
+});
