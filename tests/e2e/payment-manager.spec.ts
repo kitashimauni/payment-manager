@@ -360,7 +360,7 @@ test("shows failed method saves without clearing an unsaved name", async ({ page
     };
   });
   await method.getByRole("button", { name: "現金の名前を保存" }).click();
-  await expect(page.getByRole("alert")).toContainText("E2E simulated save failure");
+  await expect(page.locator(".error-banner[role='alert']")).toContainText("E2E simulated save failure");
   await expect(method.getByRole("textbox", { name: "現金の名前", exact: true })).toHaveValue("現金保存失敗テスト");
   await expect(method.getByText("未保存", { exact: true })).toBeVisible();
   await page.reload();
