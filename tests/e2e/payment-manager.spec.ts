@@ -93,6 +93,67 @@ test("shows an app-colored focus indicator during keyboard navigation", async ({
   expect(await page.locator(":focus-visible").evaluate((element) => getComputedStyle(element).outlineColor)).toBe("rgb(184, 62, 50)");
 });
 
+test("keeps tabs aligned and free of horizontal overflow at mobile and desktop widths", async ({ page }) => {
+  for (const width of [390, 768, 1024, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await openHome(page);
+
+    const measureLayout = () => page.evaluate(() => {
+      const header = document.querySelector<HTMLElement>(".topbar-inner");
+      const main = document.querySelector<HTMLElement>(".page-container");
+      const nav = document.querySelector<HTMLElement>(".bottom-nav");
+      const actions = document.querySelector<HTMLElement>(".topbar-actions");
+      if (!header || !main || !nav || !actions) throw new Error("App shell is missing");
+
+      const navRect = nav.getBoundingClientRect();
+      const actionsRect = actions.getBoundingClientRect();
+      const overlapping = navRect.left < actionsRect.right && navRect.right > actionsRect.left
+        && navRect.top < actionsRect.bottom && navRect.bottom > actionsRect.top;
+
+      return {
+        headerLeft: header.getBoundingClientRect().left,
+        mainLeft: main.getBoundingClientRect().left,
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        overlapping,
+        scrollbarGutter: getComputedStyle(document.documentElement).scrollbarGutter,
+      };
+    });
+
+    const baseline = await measureLayout();
+    expect(baseline.scrollbarGutter).toBe("stable");
+
+    for (const [label, heading] of [
+      ["履歴", "支払い履歴"],
+      ["グループ", "グループ"],
+      ["設定", "設定"],
+      ["記録", null],
+    ] as const) {
+      await page.getByRole("link", { name: label, exact: true }).click();
+      if (heading) await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+      else await expect(page.getByLabel("金額", { exact: true })).toBeVisible();
+
+      const current = await measureLayout();
+      expect(current.overflow, `${width}px / ${label}: unexpected horizontal scroll`).toBeLessThanOrEqual(1);
+      expect(current.overlapping, `${width}px / ${label}: navigation overlaps account status`).toBe(false);
+      expect(Math.abs(current.headerLeft - baseline.headerLeft)).toBeLessThanOrEqual(1);
+      expect(Math.abs(current.mainLeft - baseline.mainLeft)).toBeLessThanOrEqual(1);
+    }
+  }
+});
+
+test("wraps unusually long payment titles without expanding the desktop page", async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 900 });
+  await openHome(page);
+  await registerPayment(page, "1500", "長い名目".repeat(50));
+
+  for (const route of ["/", "/payments"]) {
+    await page.goto(route);
+    await expect(page.getByText("長い名目".repeat(50))).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, `${route}: long title caused horizontal scrolling`).toBeLessThanOrEqual(1);
+  }
+});
+
 test("filters history and shows the current-month summary", async ({ page }) => {
   await openHome(page);
   await registerPayment(page, "1200", "E2Eコーヒー");

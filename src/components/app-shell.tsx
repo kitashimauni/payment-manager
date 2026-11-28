@@ -94,6 +94,17 @@ export function AppShell({ children, authStatus }: { children: React.ReactNode; 
                 <small>支払いを、すぐ残す。</small>
               </span>
             </OfflineAwareLink>
+            <nav className="bottom-nav" aria-label="メインナビゲーション">
+              {navigation.map((item) => {
+                const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+                return (
+                  <OfflineAwareLink key={item.href} href={item.href} className={active ? "nav-item active" : "nav-item"}>
+                    <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+                    <span>{item.label}</span>
+                  </OfflineAwareLink>
+                );
+              })}
+            </nav>
             <div className="topbar-actions">
               {identity.mode === "trusted-proxy-single-user" ? <span className="auth-status auth-user">Tailnet 同期</span> : null}
               {authStatus}
@@ -103,17 +114,6 @@ export function AppShell({ children, authStatus }: { children: React.ReactNode; 
         </header>
         <SyncMigrationPrompt />
         <main className={pathname === "/" ? "page-container home-page-container" : "page-container"}>{children}</main>
-        <nav className="bottom-nav" aria-label="メインナビゲーション">
-          {navigation.map((item) => {
-            const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-            return (
-              <OfflineAwareLink key={item.href} href={item.href} className={active ? "nav-item active" : "nav-item"}>
-                <span className="nav-icon" aria-hidden="true">{item.icon}</span>
-                <span>{item.label}</span>
-              </OfflineAwareLink>
-            );
-          })}
-        </nav>
       </div>
     </>
   );

@@ -20,10 +20,12 @@
 | 自動テスト/CI | 実装済み | IndexedDBの主要フローとLWWのdelete/update競合をVitestで検証し、Playwrightで主要画面のCRUD、検索/集計、Export/Import、オフライン/PWA、Group・Payment Method履歴、認証済みoffline→online同期を検証。GitHub Actionsでmise経由のinstall / typecheck / test / build / Chromium E2Eを実行。PostgreSQL統合テストでは2デバイスのcursor同期も確認 |
 | Docker Composeデプロイ（Issue #36） | 構成・CI実装済み（LXC現地検証待ち） | Node 26/pnpm 11のstandalone runner、PostgreSQL 17永続Volume、明示的なmigrate、バックアップ/復元手順、DockerスモークCI、非特権LXC手順（`docs/deployment-lxc.md`）。実際のProxmox構築やOAuth/HTTPS公開は別作業 |
 | Tailscale限定の単一ユーザー同期（Issue #38） | 実装済み（実Tailnet現地検証待ち） | 明示的な`AUTH_MODE=trusted-proxy-single-user`、固定UUIDとbootstrap、秘密ヘッダー＋Origin/Fetch Metadata検証、Push/Pull共通principal、端末側identity取得、同期所有者照合、初回確認、Compose環境変数、Nginx/DNS-01/Split DNS手順 |
+| デスクトップ画面幅の安定化（Issue #43） | 実装済み | `scrollbar-gutter: stable`で縦スクロールバーの出現差による横ずれを抑制。ナビゲーションをヘッダー内のFlexレイアウトに統合し、中間幅では独立した段に配置。カード・一覧・設定の長文による横方向のはみ出しを抑止。390/768/1024/1280/1440pxでタブ切替をE2E検証 |
 
 ## 重要な実装判断
 
 - IndexedDBを唯一の入力待ちではなく一次保存先にし、登録時に通信を待たない。
+- デスクトップではヘッダーとメインを同じドキュメント幅で配置し、スクロールバーの有無に関わらず左右の基準位置を保つ。PC用のナビゲーションは固定配置でアカウント表示と重ならないようヘッダー内に置き、761–960pxでは折り返して独立した段とする。カードのグリッドは`minmax(0, 1fr)`を使い、長い名目などを折り返す。横方向のはみ出しを`overflow-x: hidden`で隠すことはしない。
 - 変更はOutboxへ記録し、オンライン時に同期APIへ送信する。サーバー未設定でも登録データは失われない。
 - Outboxの追加・削除・同期完了は同一ウィンドウの変更イベントで通知し、NetworkStatusがオンライン状態と同期待ち件数を再取得する。認証済みでオンラインのOutbox追加時は同イベントから同期も開始し、同期中に追加されたローカル変更はsingle-flight完了後に再送する。オンライン復帰直後の一時的な通信失敗は短い遅延で再試行する。
 - Groupは必須にせず、削除時はPaymentを削除せず `groupId = null` とする。
