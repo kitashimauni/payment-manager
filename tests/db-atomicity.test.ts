@@ -20,6 +20,10 @@ import {
   saveGroup,
   savePayment,
   savePaymentMethod,
+  addPaymentMethod,
+  renamePaymentMethod,
+  movePaymentMethod,
+  setPaymentMethodActive,
   saveSettings,
   applyRemoteChanges,
   confirmSyncMigration,
@@ -248,6 +252,78 @@ describe("IndexedDB entity/outbox atomicity", () => {
     const historicalPayment = { ...payment("archived-method-payment"), paymentMethodId: archived.id };
     await savePayment(historicalPayment);
     expect((await listPaymentMethods(true)).find((method) => method.id === historicalPayment.paymentMethodId)?.name).toBe(archived.name);
+  });
+
+  it("serializes renames and moves against the latest method without losing edits", async () => {
+    const first = await addPaymentMethod("移動テストA");
+    const second = await addPaymentMethod("移動テストB");
+    const third = await addPaymentMethod("移動テストC");
+
+    await Promise.all([
+      renamePaymentMethod(second.id, "移動テストB変更後"),
+      movePaymentMethod(second.id, -1),
+    ]);
+
+    let ordered = (await listPaymentMethods()).filter((method) => [first.id, second.id, third.id].includes(method.id));
+    expect(ordered.map((method) => method.name)).toEqual(["移動テストB変更後", "移動テストA", "移動テストC"]);
+    expect(new Set((await listPaymentMethods(true)).map((method) => method.sortOrder)).size).toBe((await listPaymentMethods(true)).length);
+
+    await movePaymentMethod(second.id, 1);
+    await movePaymentMethod(second.id, -1);
+    await setPaymentMethodActive(second.id, false);
+    await setPaymentMethodActive(second.id, true);
+    ordered = (await listPaymentMethods()).filter((method) => [first.id, second.id, third.id].includes(method.id));
+    expect(ordered.find((method) => method.id === second.id)?.name).toBe("移動テストB変更後");
+    expect(ordered.at(-1)?.id).toBe(second.id);
+    expect((await listOutbox()).some((entry) => entry.entityId === second.id && (entry.payload as PaymentMethod).name === "移動テストB変更後")).toBe(true);
+  });
+
+  it("uses a deterministic order for legacy methods with the same sortOrder", async () => {
+    const timestamp = new Date().toISOString();
+    const common = { sortOrder: 50000, isActive: true, createdAt: timestamp, updatedAt: timestamp, deletedAt: null };
+    const first = { ...common, id: "tie-method-a", name: "同順A" };
+    const second = { ...common, id: "tie-method-b", name: "同順B" };
+    await savePaymentMethod(second);
+    await savePaymentMethod(first);
+
+    const listed = await listPaymentMethods();
+    expect(listed.indexOf(listed.find((method) => method.id === first.id)!)).toBeLessThan(listed.indexOf(listed.find((method) => method.id === second.id)!));
+    await movePaymentMethod(second.id, -1);
+    const reordered = await listPaymentMethods();
+    expect(reordered.indexOf(reordered.find((method) => method.id === second.id)!)).toBeLessThan(reordered.indexOf(reordered.find((method) => method.id === first.id)!));
+    expect(new Set(reordered.map((method) => method.sortOrder)).size).toBe(reordered.length);
+  });
+
+  it("rolls back every reordered method and outbox entry if the second outbox write fails", async () => {
+    const first = await addPaymentMethod("ロールバックA");
+    const second = await addPaymentMethod("ロールバックB");
+    const before = await listPaymentMethods(true);
+    const beforeOutbox = (await listOutbox()).map((entry) => entry.id).sort();
+    const originalAdd = IDBObjectStore.prototype.add;
+    let writes = 0;
+    const add = vi.spyOn(IDBObjectStore.prototype, "add").mockImplementation(function (this: IDBObjectStore, value: unknown, key?: IDBValidKey) {
+      if (this.name === "outbox" && ++writes === 2) throw new Error("second outbox write failed");
+      return originalAdd.call(this, value, key);
+    });
+
+    try {
+      await expect(movePaymentMethod(second.id, -1)).rejects.toThrow("second outbox write failed");
+    } finally {
+      add.mockRestore();
+    }
+
+    expect(await listPaymentMethods(true)).toEqual(before);
+    expect((await listOutbox()).map((entry) => entry.id).sort()).toEqual(beforeOutbox);
+    expect((await listPaymentMethods()).find((method) => method.id === first.id)).toBeDefined();
+  });
+
+  it("increments timestamps across rapid edits and keeps the most recent name", async () => {
+    const created = await addPaymentMethod("連続編集A");
+    const renamed = await renamePaymentMethod(created.id, "連続編集B");
+    const renamedAgain = await renamePaymentMethod(created.id, "連続編集C");
+    expect(Date.parse(renamed.updatedAt)).toBeGreaterThan(Date.parse(created.updatedAt));
+    expect(Date.parse(renamedAgain.updatedAt)).toBeGreaterThan(Date.parse(renamed.updatedAt));
+    expect((await listPaymentMethods()).find((method) => method.id === created.id)?.name).toBe("連続編集C");
   });
 
   it("does not push local data before migration confirmation", async () => {

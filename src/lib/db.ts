@@ -516,7 +516,133 @@ export async function listPaymentMethods(includeArchived = false) {
   const methods = await getAll<PaymentMethod>("paymentMethods");
   return methods
     .filter((method) => includeArchived || (method.isActive && !method.deletedAt))
-    .sort((a, b) => a.sortOrder - b.sortOrder);
+    .sort(comparePaymentMethods);
+}
+
+function comparePaymentMethods(a: PaymentMethod, b: PaymentMethod) {
+  return a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+}
+
+function nextPaymentMethodTimestamp(methods: PaymentMethod[]) {
+  const latest = Math.max(0, ...methods.map((method) => Date.parse(method.updatedAt) || 0));
+  return new Date(Math.max(Date.now(), latest + 1)).toISOString();
+}
+
+function notifyPaymentMethodUpdates(methods: PaymentMethod[]) {
+  if (methods.length === 0) return;
+  notifyOutboxChanged();
+  methods.forEach((method) => notifyLocalDataChanged({ kind: "paymentMethods", entityId: method.id, source: "local" }));
+}
+
+/** Read the newest version inside the write transaction, never a stale UI snapshot. */
+function updateStoredPaymentMethod(id: string, update: (current: PaymentMethod, all: PaymentMethod[]) => PaymentMethod) {
+  return runWriteTransaction<{ saved: PaymentMethod; changed: boolean }>(["paymentMethods", "outbox"], (transaction, complete, fail) => {
+    const store = transaction.objectStore("paymentMethods");
+    const request = store.getAll();
+    request.onsuccess = () => {
+      try {
+        const all = request.result as PaymentMethod[];
+        const current = all.find((method) => method.id === id);
+        if (!current || current.deletedAt) throw new Error("支払い方法が見つかりません。再読み込みしてください。");
+        const saved = update(current, all);
+        if (saved !== current) {
+          store.put(saved);
+          addOutboxOperation(transaction, "PAYMENT_METHOD_UPSERT", id, saved);
+        }
+        complete({ saved, changed: saved !== current });
+      } catch (error) {
+        fail(error);
+      }
+    };
+    request.onerror = () => fail(request.error ?? new Error("支払い方法の取得に失敗しました。"));
+  }).then(({ saved, changed }) => {
+    if (changed) notifyPaymentMethodUpdates([saved]);
+    return saved;
+  });
+}
+
+export function addPaymentMethod(name: string) {
+  const cleanName = name.trim();
+  if (!cleanName || cleanName.length > 40) return Promise.reject(new Error("支払い方法名は1〜40文字で入力してください。"));
+  return runWriteTransaction<PaymentMethod>(["paymentMethods", "outbox"], (transaction, complete, fail) => {
+    const store = transaction.objectStore("paymentMethods");
+    const request = store.getAll();
+    request.onsuccess = () => {
+      try {
+        const methods = request.result as PaymentMethod[];
+        const timestamp = nextPaymentMethodTimestamp(methods);
+        const saved: PaymentMethod = {
+          id: uuid(), name: cleanName, sortOrder: Math.max(-1, ...methods.map((method) => method.sortOrder)) + 1,
+          isActive: true, createdAt: timestamp, updatedAt: timestamp, deletedAt: null,
+        };
+        store.put(saved);
+        addOutboxOperation(transaction, "PAYMENT_METHOD_UPSERT", saved.id, saved);
+        complete(saved);
+      } catch (error) {
+        fail(error);
+      }
+    };
+    request.onerror = () => fail(request.error ?? new Error("支払い方法の取得に失敗しました。"));
+  }).then((saved) => {
+    notifyPaymentMethodUpdates([saved]);
+    return saved;
+  });
+}
+
+export function renamePaymentMethod(id: string, name: string) {
+  const cleanName = name.trim();
+  if (!cleanName || cleanName.length > 40) return Promise.reject(new Error("支払い方法名は1〜40文字で入力してください。"));
+  return updateStoredPaymentMethod(id, (current, all) => current.name === cleanName
+    ? current
+    : { ...current, name: cleanName, updatedAt: nextPaymentMethodTimestamp(all) });
+}
+
+export function setPaymentMethodActive(id: string, isActive: boolean) {
+  return updateStoredPaymentMethod(id, (current, all) => current.isActive === isActive
+    ? current
+    : {
+      ...current, isActive, deletedAt: null,
+      sortOrder: isActive ? Math.max(-1, ...all.map((method) => method.sortOrder)) + 1 : current.sortOrder,
+      updatedAt: nextPaymentMethodTimestamp(all),
+    });
+}
+
+/** Reorder and normalize every method and its outbox entry in a single commit. */
+export function movePaymentMethod(id: string, direction: -1 | 1) {
+  return runWriteTransaction<PaymentMethod[]>(["paymentMethods", "outbox"], (transaction, complete, fail) => {
+    const store = transaction.objectStore("paymentMethods");
+    const request = store.getAll();
+    request.onsuccess = () => {
+      try {
+        const all = (request.result as PaymentMethod[]).sort(comparePaymentMethods);
+        const active = all.filter((method) => method.isActive && !method.deletedAt);
+        const index = active.findIndex((method) => method.id === id);
+        if (index < 0) throw new Error("移動する支払い方法が見つかりません。再読み込みしてください。");
+        const targetIndex = index + direction;
+        if (targetIndex < 0 || targetIndex >= active.length) {
+          complete([]);
+          return;
+        }
+        [active[index], active[targetIndex]] = [active[targetIndex], active[index]];
+        const ordered = [...active, ...all.filter((method) => !method.isActive || method.deletedAt)];
+        const timestamp = nextPaymentMethodTimestamp(all);
+        const changed = ordered.flatMap((method, sortOrder) => method.sortOrder === sortOrder
+          ? []
+          : [{ ...method, sortOrder, updatedAt: timestamp }]);
+        changed.forEach((method) => {
+          store.put(method);
+          addOutboxOperation(transaction, "PAYMENT_METHOD_UPSERT", method.id, method);
+        });
+        complete(changed);
+      } catch (error) {
+        fail(error);
+      }
+    };
+    request.onerror = () => fail(request.error ?? new Error("支払い方法の取得に失敗しました。"));
+  }).then((changed) => {
+    notifyPaymentMethodUpdates(changed);
+    return changed;
+  });
 }
 
 export function getPaymentMethod(id: string) {
